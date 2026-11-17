@@ -87,7 +87,7 @@ CREATE INDEX idx_tickets_team_id ON tickets(team_id);
 CREATE INDEX idx_tickets_sla_due_at ON tickets(sla_due_at) WHERE status NOT IN ('Resolved', 'Closed');
 CREATE INDEX idx_tickets_created_at ON tickets(created_at DESC);
 CREATE INDEX idx_ticket_events_ticket_id_created ON ticket_events(ticket_id, created_at ASC);
-
+COMMIT;
 
 --test to see if tables are created
 SELECT table_name 
