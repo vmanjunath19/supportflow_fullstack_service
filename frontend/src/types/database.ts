@@ -43,4 +43,8 @@ export interface Ticket {
   resolved_at: string | null;
   created_at: string;
   updated_at: string;
+  // Joined relation from support_teams
+  support_teams?: {
+    name: string;
+  } | null;
 }
