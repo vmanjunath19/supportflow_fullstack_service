@@ -294,6 +294,7 @@ export function TicketTable({
                   <td
                     className="py-3.5 pl-3 pr-4 text-xs sm:pr-6 hidden sm:table-cell whitespace-nowrap"
                     onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
                     {!permissions.canAssignTeam ? (
@@ -311,12 +312,21 @@ export function TicketTable({
                       <select
                         aria-label={`Assign team for ${formatTicketId(ticket.ticket_number)}`}
                         value={ticket.team_id ?? ''}
-                        disabled={assigningTicketId === ticket.id}
-                        onChange={(e) => onAssignTeam(ticket, e.target.value)}
-                        className={`text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 ${ticket.team_id
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          if (assigningTicketId !== ticket.id) {
+                            onAssignTeam(ticket, e.target.value);
+                          }
+                        }}
+                        className={`text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 ${
+                          assigningTicketId === ticket.id ? 'opacity-60 pointer-events-none' : ''
+                        } ${
+                          ticket.team_id
                             ? 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
                             : 'bg-amber-50/80 border-amber-300/80 text-amber-800 hover:border-amber-400'
-                          }`}
+                        }`}
                       >
                         <option value="">Unassigned</option>
                         {teams.map((team) => (
