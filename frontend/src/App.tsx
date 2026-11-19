@@ -9,7 +9,13 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { supabase } from './lib/supabase';
-import type { Ticket, TicketPriority, TicketStatus, UserRole } from './types/database';
+import type {
+  SupportTeam,
+  Ticket,
+  TicketPriority,
+  TicketStatus,
+  UserRole,
+} from './types/database';
 import {
   TicketTable,
   type SortDirection,
@@ -19,6 +25,9 @@ import {
   TicketFilterBar,
   type TicketFilters,
 } from './components/TicketFilterBar';
+// Add import at the top of frontend/src/App.tsx:
+import { CreateTicketModal } from './components/CreateTicketModal';
+import { TicketDetailDrawer } from './components/TicketDetailDrawer';
 
 type NavFilter = 'all' | 'urgent' | 'sla' | 'resolved';
 
@@ -51,31 +60,135 @@ export function App() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   const [filters, setFilters] = useState<TicketFilters>(DEFAULT_FILTERS);
   const [sortField, setSortField] = useState<SortField>('ticket_number');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [teams, setTeams] = useState<SupportTeam[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+  const [assigningTicketId, setAssigningTicketId] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   async function fetchTickets() {
+    console.log('1. fetchTickets entered');
     setIsLoading(true);
     setError(null);
 
-    const { data, error: fetchError } = await supabase
-      .from('tickets')
-      .select('*, support_teams(name)')
-      .order('created_at', { ascending: false });
+    try {
+      console.log('2. Calling Supabase for tickets and teams...', supabase);
+      const [ticketsRes, teamsRes] = await Promise.all([
+        supabase
+          .from('tickets')
+          .select('*, support_teams(name)')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('support_teams')
+          .select('*')
+          .eq('is_active', true)
+          .order('name', { ascending: true }),
+      ]);
 
-    if (fetchError) {
-      setError(fetchError.message);
-    } else {
-      setTickets((data as Ticket[]) ?? []);
+      console.log('3. Supabase responses:', { ticketsRes, teamsRes });
+
+      if (ticketsRes.error) {
+        setError(ticketsRes.error.message);
+      } else {
+        setTickets((ticketsRes.data as Ticket[]) ?? []);
+      }
+
+      if (teamsRes.error) {
+        console.error('Failed to fetch teams:', teamsRes.error.message);
+      } else if (teamsRes.data) {
+        setTeams(teamsRes.data as SupportTeam[]);
+      }
+    } catch (err) {
+      console.error('Caught error in fetchTickets:', err);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }
 
   useEffect(() => {
     fetchTickets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 3500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
+  async function handleAssignTeam(ticket: Ticket, newTeamId: string) {
+    const normalizedTeamId = newTeamId === '' ? null : newTeamId;
+    if (ticket.team_id === normalizedTeamId) return;
+
+    setAssigningTicketId(ticket.id);
+    setError(null);
+
+    const prevTeamName = ticket.support_teams?.name ?? 'Unassigned';
+    const nextTeamObj = teams.find((t) => t.id === normalizedTeamId) ?? null;
+    const nextTeamName = nextTeamObj?.name ?? 'Unassigned';
+
+    // Auto-advance 'New' tickets to 'Triaged' upon initial team routing
+    const nextStatus: TicketStatus =
+      ticket.status === 'New' && normalizedTeamId !== null ? 'Triaged' : ticket.status;
+
+    const nowIso = new Date().toISOString();
+    const actorLabel =
+      activeRole === 'Admin/Manager'
+        ? 'admin.manager@supportflow.local'
+        : 'support.engineer@supportflow.local';
+
+    const { data, error: updateError } = await supabase
+      .from('tickets')
+      .update({
+        team_id: normalizedTeamId,
+        status: nextStatus,
+        updated_at: nowIso,
+      })
+      .eq('id', ticket.id)
+      .select('*, support_teams(name)')
+      .single();
+
+    if (updateError) {
+      setError(`Failed to assign team: ${updateError.message}`);
+      setAssigningTicketId(null);
+      return;
+    }
+
+    await supabase.from('ticket_events').insert({
+      ticket_id: ticket.id,
+      actor: actorLabel,
+      event_type: 'TEAM_REASSIGNED',
+      previous_state: prevTeamName,
+      new_state: nextTeamName,
+      metadata: {
+        role: activeRole,
+        auto_triaged: ticket.status === 'New' && nextStatus === 'Triaged',
+      },
+    });
+
+    const updatedTicket = data as Ticket;
+    handleTicketUpdated(updatedTicket);
+
+    const formattedId = `INC-${String(ticket.ticket_number).padStart(4, '0')}`;
+    setToastMessage(
+      normalizedTeamId
+        ? `${formattedId} assigned to ${nextTeamName}`
+        : `${formattedId} unassigned`
+    );
+    setAssigningTicketId(null);
+  }
+
+  function handleTicketUpdated(updatedTicket: Ticket) {
+    setTickets((prev) =>
+      prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t))
+    );
+    setSelectedTicket(updatedTicket);
+  }
 
   function handleSortChange(field: SortField) {
     if (sortField === field) {
@@ -220,11 +333,10 @@ export function App() {
           >
             <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
           </button>
-
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-3.5 py-2 rounded-lg shadow-sm transition-colors cursor-pointer"
-          >
+            onClick={() => setIsCreateModalOpen(true)}
+            className="inline-flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-3.5 py-2 rounded-lg shadow-sm transition-colors cursor-pointer">
             <Plus className="w-4 h-4" />
             New Ticket
           </button>
@@ -242,11 +354,10 @@ export function App() {
                 setActiveNav('all');
                 setFilters(DEFAULT_FILTERS);
               }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                activeNav === 'all'
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${activeNav === 'all'
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-slate-600 hover:bg-slate-100'
+                }`}
             >
               <Inbox className="w-4 h-4" />
               All Active Tickets
@@ -258,11 +369,10 @@ export function App() {
                 setActiveNav('urgent');
                 setFilters(DEFAULT_FILTERS);
               }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                activeNav === 'urgent'
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${activeNav === 'urgent'
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-slate-600 hover:bg-slate-100'
+                }`}
             >
               <AlertTriangle className="w-4 h-4" />
               Urgent &amp; High Priority
@@ -274,11 +384,10 @@ export function App() {
                 setActiveNav('sla');
                 setFilters(DEFAULT_FILTERS);
               }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                activeNav === 'sla'
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${activeNav === 'sla'
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-slate-600 hover:bg-slate-100'
+                }`}
             >
               <Layers className="w-4 h-4" />
               SLA Breached
@@ -290,11 +399,10 @@ export function App() {
                 setActiveNav('resolved');
                 setFilters(DEFAULT_FILTERS);
               }}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${
-                activeNav === 'resolved'
-                  ? 'bg-indigo-50 text-indigo-700'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors cursor-pointer ${activeNav === 'resolved'
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-slate-600 hover:bg-slate-100'
+                }`}
             >
               <CheckCircle2 className="w-4 h-4" />
               Resolved &amp; Closed
@@ -328,6 +436,9 @@ export function App() {
 
           <TicketTable
             tickets={visibleTickets}
+            teams={teams}
+            activeRole={activeRole}
+            assigningTicketId={assigningTicketId}
             isLoading={isLoading}
             error={error}
             sortField={sortField}
@@ -335,9 +446,38 @@ export function App() {
             onSortChange={handleSortChange}
             hasActiveFilters={hasActiveFilters}
             onResetFilters={() => setFilters(DEFAULT_FILTERS)}
+            onSelectTicket={setSelectedTicket}
+            onAssignTeam={handleAssignTeam}
           />
         </main>
       </div>
+
+      #new ticket create modal
+      <CreateTicketModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onTicketCreated={fetchTickets}
+      />
+
+      #for ticket details
+      <TicketDetailDrawer
+        ticket={selectedTicket}
+        activeRole={activeRole}
+        teams={teams}
+        onClose={() => setSelectedTicket(null)}
+        onTicketUpdated={handleTicketUpdated}
+      />
+
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white text-xs font-medium px-4 py-3 rounded-xl shadow-lg border border-slate-700"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

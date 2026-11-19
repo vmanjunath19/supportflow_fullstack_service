@@ -48,3 +48,15 @@ export interface Ticket {
     name: string;
   } | null;
 }
+
+export interface TicketEvent {
+  id: string;
+  ticket_id: string;
+  actor: string;
+  event_type: string;
+  previous_state: string | null;
+  new_state: string | null;
+  metadata: Record<string, unknown>;
+  idempotency_key: string | null;
+  created_at: string;
+}

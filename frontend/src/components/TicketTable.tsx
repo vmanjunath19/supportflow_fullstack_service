@@ -7,7 +7,7 @@ import {
   ArrowDown,
   SearchX,
 } from 'lucide-react';
-import type { Ticket } from '../types/database';
+import type { SupportTeam, Ticket, UserRole } from '../types/database';
 import { PriorityBadge, StatusBadge } from './TicketBadges';
 
 export type SortField =
@@ -22,6 +22,9 @@ export type SortDirection = 'asc' | 'desc';
 
 interface TicketTableProps {
   tickets: Ticket[];
+  teams: SupportTeam[];
+  activeRole: UserRole;
+  assigningTicketId: string | null;
   isLoading: boolean;
   error: string | null;
   sortField: SortField;
@@ -30,6 +33,7 @@ interface TicketTableProps {
   hasActiveFilters: boolean;
   onResetFilters: () => void;
   onSelectTicket?: (ticket: Ticket) => void;
+  onAssignTeam: (ticket: Ticket, teamId: string) => void;
 }
 
 function formatTicketId(num: number): string {
@@ -44,6 +48,9 @@ function isSlaBreached(ticket: Ticket): boolean {
 
 export function TicketTable({
   tickets,
+  teams,
+  activeRole,
+  assigningTicketId,
   isLoading,
   error,
   sortField,
@@ -52,6 +59,7 @@ export function TicketTable({
   hasActiveFilters,
   onResetFilters,
   onSelectTicket,
+  onAssignTeam,
 }: TicketTableProps) {
   function renderSortIcon(field: SortField) {
     if (sortField !== field) {
@@ -282,16 +290,42 @@ export function TicketTable({
                     </span>
                   </td>
 
-                  <td className="py-3.5 pl-3 pr-4 text-xs sm:pr-6 hidden sm:table-cell whitespace-nowrap">
-                    {teamName ? (
-                      <span className="inline-flex items-center gap-1.5 text-slate-700 font-medium">
-                        <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
-                        {teamName}
-                      </span>
+                  <td
+                    className="py-3.5 pl-3 pr-4 text-xs sm:pr-6 hidden sm:table-cell whitespace-nowrap"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    {activeRole === 'End-User' ? (
+                      teamName ? (
+                        <span className="inline-flex items-center gap-1.5 text-slate-700 font-medium">
+                          <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
+                          {teamName}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700 ring-1 ring-inset ring-amber-600/20 font-medium">
+                          Unassigned
+                        </span>
+                      )
                     ) : (
-                      <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700 ring-1 ring-inset ring-amber-600/20 font-medium">
-                        Unassigned
-                      </span>
+                      <div className="relative inline-flex items-center">
+                        <select
+                          aria-label={`Assign team for ${formatTicketId(ticket.ticket_number)}`}
+                          value={ticket.team_id ?? ''}
+                          disabled={assigningTicketId === ticket.id}
+                          onChange={(e) => onAssignTeam(ticket, e.target.value)}
+                          className={`text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 ${ticket.team_id
+                              ? 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
+                              : 'bg-amber-50/80 border-amber-300/80 text-amber-800 hover:border-amber-400'
+                            }`}
+                        >
+                          <option value="">Unassigned</option>
+                          {teams.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </td>
                 </tr>
