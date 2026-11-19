@@ -8,6 +8,10 @@ import {
   Plus,
   RefreshCw,
 } from 'lucide-react';
+import {
+  filterTicketsForRole,
+  getRolePermissions,
+} from './lib/rbac';
 import { supabase } from './lib/supabase';
 import type {
   SupportTeam,
@@ -69,6 +73,29 @@ export function App() {
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [assigningTicketId, setAssigningTicketId] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const permissions = useMemo(() => getRolePermissions(activeRole), [activeRole]);
+
+  const roleScopedTickets = useMemo(
+    () => filterTicketsForRole(tickets, activeRole),
+    [tickets, activeRole]
+  );
+
+  const slaBreachedCount = useMemo(() => {
+    const now = Date.now();
+    return tickets.filter(
+      (t) =>
+        t.status !== 'Resolved' &&
+        t.status !== 'Closed' &&
+        t.sla_due_at !== null &&
+        new Date(t.sla_due_at).getTime() < now
+    ).length;
+  }, [tickets]);
+
+  function handleTicketDeleted(ticketId: string) {
+    setTickets((prev) => prev.filter((t) => t.id !== ticketId));
+    setSelectedTicket(null);
+    setToastMessage('Ticket permanently deleted by Admin/Manager');
+  }
 
   async function fetchTickets() {
     console.log('1. fetchTickets entered');
@@ -114,6 +141,14 @@ export function App() {
     fetchTickets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function handleRoleChange(nextRole: UserRole) {
+    setActiveRole(nextRole);
+    const nextPermissions = getRolePermissions(nextRole);
+    if (!nextPermissions.canViewAllTickets && (activeNav === 'urgent' || activeNav === 'sla')) {
+      setActiveNav('all');
+    }
+  }
 
   useEffect(() => {
     if (!toastMessage) return;
@@ -204,14 +239,14 @@ export function App() {
     const now = Date.now();
     switch (activeNav) {
       case 'urgent':
-        return tickets.filter(
+        return roleScopedTickets.filter(
           (t) =>
             (t.priority === 'Urgent' || t.priority === 'High') &&
             t.status !== 'Resolved' &&
             t.status !== 'Closed'
         );
       case 'sla':
-        return tickets.filter(
+        return roleScopedTickets.filter(
           (t) =>
             t.status !== 'Resolved' &&
             t.status !== 'Closed' &&
@@ -219,12 +254,16 @@ export function App() {
             new Date(t.sla_due_at).getTime() < now
         );
       case 'resolved':
-        return tickets.filter((t) => t.status === 'Resolved' || t.status === 'Closed');
+        return roleScopedTickets.filter(
+          (t) => t.status === 'Resolved' || t.status === 'Closed'
+        );
       case 'all':
       default:
-        return tickets.filter((t) => t.status !== 'Resolved' && t.status !== 'Closed');
+        return roleScopedTickets.filter(
+          (t) => t.status !== 'Resolved' && t.status !== 'Closed'
+        );
     }
-  }, [tickets, activeNav]);
+  }, [roleScopedTickets, activeNav]);
 
   // 2. Apply real-time search, dropdown filters, and column sorting
   const visibleTickets = useMemo(() => {
@@ -315,7 +354,7 @@ export function App() {
             <select
               id="role-select"
               value={activeRole}
-              onChange={(e) => setActiveRole(e.target.value as UserRole)}
+              onChange={(e) => handleRoleChange(e.target.value as UserRole)}
               className="bg-transparent text-xs font-semibold text-slate-900 focus:outline-none cursor-pointer"
             >
               <option value="End-User">End-User</option>
@@ -434,10 +473,37 @@ export function App() {
             filteredCount={visibleTickets.length}
           />
 
+          {permissions.canViewSlaGovernance && slaBreachedCount > 0 && (
+            <div className="mb-5 p-4 rounded-xl bg-rose-50 border border-rose-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="p-2 rounded-lg bg-rose-100 text-rose-700 shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-xs font-bold uppercase tracking-wider text-rose-900">
+                    Admin SLA Governance Alert
+                  </h2>
+                  <p className="text-xs text-rose-800 mt-0.5">
+                    <strong>{slaBreachedCount}</strong> active{' '}
+                    {slaBreachedCount === 1 ? 'incident has' : 'incidents have'} breached
+                    target SLA resolution thresholds and require immediate escalation.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveNav('sla')}
+                className="px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs transition-colors cursor-pointer shrink-0"
+              >
+                Inspect Breached Queue
+              </button>
+            </div>
+          )}
+
           <TicketTable
             tickets={visibleTickets}
             teams={teams}
-            activeRole={activeRole}
+            permissions={permissions}
             assigningTicketId={assigningTicketId}
             isLoading={isLoading}
             error={error}
@@ -462,10 +528,11 @@ export function App() {
       #for ticket details
       <TicketDetailDrawer
         ticket={selectedTicket}
-        activeRole={activeRole}
+        permissions={permissions}
         teams={teams}
         onClose={() => setSelectedTicket(null)}
         onTicketUpdated={handleTicketUpdated}
+        onTicketDeleted={handleTicketDeleted}
       />
 
       {toastMessage && (

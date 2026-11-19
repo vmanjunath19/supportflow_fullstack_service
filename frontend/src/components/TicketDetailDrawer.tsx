@@ -11,23 +11,26 @@ import {
   History,
   ArrowRight,
   Save,
+  Trash2,
+  Lock,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { RolePermissions } from '../lib/rbac';
 import type {
   SupportTeam,
   Ticket,
   TicketEvent,
   TicketStatus,
-  UserRole,
 } from '../types/database';
 import { PriorityBadge, StatusBadge } from './TicketBadges';
 
 interface TicketDetailDrawerProps {
   ticket: Ticket | null;
-  activeRole: UserRole;
+  permissions: RolePermissions;
   teams: SupportTeam[];
   onClose: () => void;
   onTicketUpdated: (updated: Ticket) => void;
+  onTicketDeleted: (ticketId: string) => void;
 }
 
 const VALID_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
@@ -64,10 +67,11 @@ function formatTimestamp(iso: string | null): string {
 
 export function TicketDetailDrawer({
   ticket,
-  activeRole,
+  permissions,
   teams,
   onClose,
   onTicketUpdated,
+  onTicketDeleted,
 }: TicketDetailDrawerProps) {
   const [resolutionNotes, setResolutionNotes] = useState<string>('');
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
@@ -76,28 +80,6 @@ export function TicketDetailDrawer({
   const [isUpdating, setIsUpdating] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
-
-  // Sync local form state whenever a different ticket is opened
-  useEffect(() => {
-    if (!ticket) return;
-    setResolutionNotes(ticket.resolution_notes ?? '');
-    setSelectedTeamId(ticket.team_id ?? '');
-    setActionError(null);
-    setActionSuccess(null);
-    fetchTicketEvents(ticket.id);
-  }, [ticket?.id]);
-
-  // Close drawer on Escape key
-  useEffect(() => {
-    if (!ticket) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape' && !isUpdating) {
-        onClose();
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [ticket, isUpdating, onClose]);
 
   async function fetchTicketEvents(ticketId: string) {
     setIsLoadingEvents(true);
@@ -111,6 +93,35 @@ export function TicketDetailDrawer({
     setIsLoadingEvents(false);
   }
 
+  // Sync local form state and load audit events whenever the opened ticket changes
+  useEffect(() => {
+    if (!ticket) return;
+    setResolutionNotes(ticket.resolution_notes ?? '');
+    setSelectedTeamId(ticket.team_id ?? '');
+    setActionError(null);
+    setActionSuccess(null);
+    fetchTicketEvents(ticket.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticket?.id]);
+
+  // Keep local dropdown in sync if team_id updates externally
+  useEffect(() => {
+    if (!ticket) return;
+    setSelectedTeamId(ticket.team_id ?? '');
+  }, [ticket?.team_id]);
+
+  // Close drawer on Escape key
+  useEffect(() => {
+    if (!ticket) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !isUpdating) {
+        onClose();
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [ticket, isUpdating, onClose]);
+
   if (!ticket) return null;
 
   const isTerminalState = ticket.status === 'Resolved' || ticket.status === 'Closed';
@@ -119,16 +130,19 @@ export function TicketDetailDrawer({
     ticket.sla_due_at !== null &&
     new Date(ticket.sla_due_at).getTime() < Date.now();
 
-  const availableTransitions = VALID_TRANSITIONS[ticket.status] ?? [];
+  const availableTransitions = (VALID_TRANSITIONS[ticket.status] ?? []).filter(
+    (targetStatus) => permissions.canTransitionStatus(ticket.status, targetStatus)
+  );
+
   const actorLabel =
-    activeRole === 'Admin/Manager'
+    permissions.role === 'Admin/Manager'
       ? 'admin.manager@supportflow.local'
-      : activeRole === 'Support Engineer'
+      : permissions.role === 'Support Engineer'
         ? 'support.engineer@supportflow.local'
         : ticket.requester_email;
 
   async function handleTeamChange(newTeamId: string) {
-    if (!ticket) return;
+    if (!ticket || !permissions.canAssignTeam) return;
     setSelectedTeamId(newTeamId);
     setActionError(null);
     setActionSuccess(null);
@@ -169,19 +183,21 @@ export function TicketDetailDrawer({
       previous_state: prevTeamName,
       new_state: nextTeamName,
       metadata: {
-        role: activeRole,
+        role: permissions.role,
         auto_triaged: ticket.status === 'New' && nextStatus === 'Triaged',
       },
     });
 
     onTicketUpdated(data as Ticket);
     await fetchTicketEvents(ticket.id);
-    setActionSuccess(`Assigned to ${nextTeamName}`);
+    setActionSuccess(
+      normalizedTeamId ? `Assigned to ${nextTeamName}` : 'Ticket unassigned'
+    );
     setIsUpdating(false);
   }
 
   async function handleStatusTransition(nextStatus: TicketStatus) {
-    if (!ticket) return;
+    if (!ticket || !permissions.canTransitionStatus(ticket.status, nextStatus)) return;
     setActionError(null);
     setActionSuccess(null);
 
@@ -227,7 +243,7 @@ export function TicketDetailDrawer({
       previous_state: ticket.status,
       new_state: nextStatus,
       metadata: {
-        role: activeRole,
+        role: permissions.role,
         ...(trimmedNotes ? { resolution_notes: trimmedNotes } : {}),
       },
     });
@@ -239,7 +255,7 @@ export function TicketDetailDrawer({
   }
 
   async function handleSaveNotesOnly() {
-    if (!ticket) return;
+    if (!ticket || !permissions.canEditResolutionNotes) return;
     setActionError(null);
     setActionSuccess(null);
 
@@ -269,6 +285,29 @@ export function TicketDetailDrawer({
     onTicketUpdated(data as Ticket);
     setActionSuccess('Resolution notes saved');
     setIsUpdating(false);
+  }
+
+  async function handleDeleteTicket() {
+    if (!ticket || !permissions.canDeleteTicket) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete ${formatTicketId(ticket.ticket_number)}? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setIsUpdating(true);
+    setActionError(null);
+
+    const { error } = await supabase.from('tickets').delete().eq('id', ticket.id);
+
+    if (error) {
+      setActionError(error.message);
+      setIsUpdating(false);
+      return;
+    }
+
+    onTicketDeleted(ticket.id);
+    onClose();
   }
 
   return (
@@ -312,7 +351,7 @@ export function TicketDetailDrawer({
             onClick={onClose}
             disabled={isUpdating}
             aria-label="Close ticket details"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer shrink-0"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/70 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -341,7 +380,7 @@ export function TicketDetailDrawer({
             </div>
           )}
 
-          {/* Description */}
+          {/* Incident Description */}
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
               Incident Description
@@ -362,7 +401,9 @@ export function TicketDetailDrawer({
                   <Mail className="w-3.5 h-3.5 text-slate-400" />
                   Requester
                 </dt>
-                <dd className="font-medium text-slate-900 truncate">{ticket.requester_email}</dd>
+                <dd className="font-medium text-slate-900 truncate">
+                  {ticket.requester_email}
+                </dd>
               </div>
 
               <div className="p-3 rounded-lg border border-slate-200 bg-white">
@@ -399,7 +440,7 @@ export function TicketDetailDrawer({
             </dl>
           </section>
 
-          {/* Assigned Support Team Selector */}
+          {/* Assigned Support Team */}
           <section>
             <label
               htmlFor="drawer-team-select"
@@ -408,23 +449,30 @@ export function TicketDetailDrawer({
               <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
               Assigned Support Team
             </label>
-            <select
-              id="drawer-team-select"
-              value={selectedTeamId}
-              disabled={isUpdating || activeRole === 'End-User'}
-              onChange={(e) => handleTeamChange(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-500 cursor-pointer"
-            >
-              <option value="">Unassigned</option>
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
+
+            {permissions.canAssignTeam ? (
+              <select
+                id="drawer-team-select"
+                value={selectedTeamId}
+                disabled={isUpdating}
+                onChange={(e) => handleTeamChange(e.target.value)}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-slate-100 disabled:text-slate-500 cursor-pointer"
+              >
+                <option value="">Unassigned</option>
+                {teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="px-3.5 py-2.5 rounded-lg border border-slate-200 bg-slate-50 text-sm font-medium text-slate-700">
+                {ticket.support_teams?.name ?? 'Pending Triage'}
+              </div>
+            )}
           </section>
 
-          {/* Resolution Notes Input */}
+          {/* Resolution Notes */}
           <section>
             <div className="flex items-center justify-between mb-2">
               <label
@@ -433,45 +481,64 @@ export function TicketDetailDrawer({
               >
                 Resolution Notes
               </label>
-              <span className="text-[11px] text-slate-400">
-                Required to Resolve or Close
-              </span>
+              {permissions.canEditResolutionNotes && (
+                <span className="text-[11px] text-slate-400">
+                  Required to Resolve or Close
+                </span>
+              )}
             </div>
-            <textarea
-              id="drawer-resolution-notes"
-              rows={3}
-              value={resolutionNotes}
-              disabled={isUpdating || activeRole === 'End-User'}
-              onChange={(e) => setResolutionNotes(e.target.value)}
-              placeholder="Document root cause, troubleshooting steps, and fix verification..."
-              className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-slate-100"
-            />
-            {activeRole !== 'End-User' && (
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleSaveNotesOnly}
+
+            {permissions.canEditResolutionNotes ? (
+              <>
+                <textarea
+                  id="drawer-resolution-notes"
+                  rows={3}
+                  value={resolutionNotes}
                   disabled={isUpdating}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  Save Notes
-                </button>
+                  onChange={(e) => setResolutionNotes(e.target.value)}
+                  placeholder="Document root cause, troubleshooting steps, and fix verification..."
+                  className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:bg-slate-100"
+                />
+                <div className="mt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleSaveNotesOnly}
+                    disabled={isUpdating}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Save Notes
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 text-sm text-slate-700 whitespace-pre-wrap">
+                {ticket.resolution_notes ? (
+                  ticket.resolution_notes
+                ) : (
+                  <span className="text-slate-400 italic">
+                    No resolution notes recorded yet.
+                  </span>
+                )}
               </div>
             )}
           </section>
 
-          {/* Status Transition Actions */}
+          {/* Workflow Status Transitions */}
           <section className="p-4 rounded-xl bg-slate-50 border border-slate-200">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">
               Workflow Status Transitions
             </h3>
 
-            {activeRole === 'End-User' ? (
-              <p className="text-xs text-slate-500">
-                Switch role to <strong>Support Engineer</strong> or{' '}
-                <strong>Admin/Manager</strong> in the top bar to execute status transitions.
-              </p>
+            {availableTransitions.length === 0 ? (
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                <Lock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span>
+                  Read-only view for <strong>{permissions.role}</strong>. Switch to{' '}
+                  <strong>Support Engineer</strong> or <strong>Admin/Manager</strong> in the
+                  top bar to execute status transitions.
+                </span>
+              </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2.5">
                 {availableTransitions.map((targetStatus) => (
@@ -489,6 +556,30 @@ export function TicketDetailDrawer({
               </div>
             )}
           </section>
+
+          {/* Admin/Manager Exclusive Governance Control */}
+          {permissions.canDeleteTicket && (
+            <section className="p-4 rounded-xl bg-rose-50/70 border border-rose-200 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="text-xs font-semibold text-rose-900">
+                  Admin Governance: Purge Ticket Record
+                </h3>
+                <p className="text-[11px] text-rose-700 mt-0.5">
+                  Permanently removes this incident and its cascade audit log from
+                  PostgreSQL.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isUpdating}
+                onClick={handleDeleteTicket}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg shadow-xs transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Delete Ticket
+              </button>
+            </section>
+          )}
 
           {/* Immutable Audit Timeline (ticket_events) */}
           <section>

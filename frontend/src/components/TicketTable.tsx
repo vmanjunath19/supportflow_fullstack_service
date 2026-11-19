@@ -7,8 +7,9 @@ import {
   ArrowDown,
   SearchX,
 } from 'lucide-react';
-import type { SupportTeam, Ticket, UserRole } from '../types/database';
+import type { SupportTeam, Ticket } from '../types/database';
 import { PriorityBadge, StatusBadge } from './TicketBadges';
+import type { RolePermissions } from '../lib/rbac';
 
 export type SortField =
   | 'ticket_number'
@@ -23,7 +24,7 @@ export type SortDirection = 'asc' | 'desc';
 interface TicketTableProps {
   tickets: Ticket[];
   teams: SupportTeam[];
-  activeRole: UserRole;
+  permissions: RolePermissions;
   assigningTicketId: string | null;
   isLoading: boolean;
   error: string | null;
@@ -49,7 +50,7 @@ function isSlaBreached(ticket: Ticket): boolean {
 export function TicketTable({
   tickets,
   teams,
-  activeRole,
+  permissions,
   assigningTicketId,
   isLoading,
   error,
@@ -295,7 +296,7 @@ export function TicketTable({
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    {activeRole === 'End-User' ? (
+                    {!permissions.canAssignTeam ? (
                       teamName ? (
                         <span className="inline-flex items-center gap-1.5 text-slate-700 font-medium">
                           <UserCheck className="w-3.5 h-3.5 text-indigo-500" />
@@ -303,29 +304,27 @@ export function TicketTable({
                         </span>
                       ) : (
                         <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-amber-700 ring-1 ring-inset ring-amber-600/20 font-medium">
-                          Unassigned
+                          Pending Triage
                         </span>
                       )
                     ) : (
-                      <div className="relative inline-flex items-center">
-                        <select
-                          aria-label={`Assign team for ${formatTicketId(ticket.ticket_number)}`}
-                          value={ticket.team_id ?? ''}
-                          disabled={assigningTicketId === ticket.id}
-                          onChange={(e) => onAssignTeam(ticket, e.target.value)}
-                          className={`text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 ${ticket.team_id
-                              ? 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
-                              : 'bg-amber-50/80 border-amber-300/80 text-amber-800 hover:border-amber-400'
-                            }`}
-                        >
-                          <option value="">Unassigned</option>
-                          {teams.map((team) => (
-                            <option key={team.id} value={team.id}>
-                              {team.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <select
+                        aria-label={`Assign team for ${formatTicketId(ticket.ticket_number)}`}
+                        value={ticket.team_id ?? ''}
+                        disabled={assigningTicketId === ticket.id}
+                        onChange={(e) => onAssignTeam(ticket, e.target.value)}
+                        className={`text-xs font-medium rounded-lg px-2.5 py-1.5 border transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 disabled:opacity-60 ${ticket.team_id
+                            ? 'bg-white border-slate-200 text-slate-800 hover:border-indigo-300'
+                            : 'bg-amber-50/80 border-amber-300/80 text-amber-800 hover:border-amber-400'
+                          }`}
+                      >
+                        <option value="">Unassigned</option>
+                        {teams.map((team) => (
+                          <option key={team.id} value={team.id}>
+                            {team.name}
+                          </option>
+                        ))}
+                      </select>
                     )}
                   </td>
                 </tr>
