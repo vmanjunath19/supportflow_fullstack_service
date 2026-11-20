@@ -142,6 +142,24 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (tickets.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const deepLinkedTicketId = params.get('ticket');
+    if (deepLinkedTicketId) {
+      const match = tickets.find((t) => t.id === deepLinkedTicketId);
+      if (match) {
+        setSelectedTicket(match);
+      }
+    }
+  }, [tickets]);
+
+  useEffect(() => {
+    if (!toastMessage) return;
+    const timer = setTimeout(() => setToastMessage(null), 3500);
+    return () => clearTimeout(timer);
+  }, [toastMessage]);
+
   function handleRoleChange(nextRole: UserRole) {
     setActiveRole(nextRole);
     const nextPermissions = getRolePermissions(nextRole);
@@ -149,12 +167,6 @@ export function App() {
       setActiveNav('all');
     }
   }
-
-  useEffect(() => {
-    if (!toastMessage) return;
-    const timer = setTimeout(() => setToastMessage(null), 3500);
-    return () => clearTimeout(timer);
-  }, [toastMessage]);
 
   async function handleAssignTeam(ticket: Ticket, newTeamId: string) {
     const normalizedTeamId = newTeamId === '' ? null : newTeamId;

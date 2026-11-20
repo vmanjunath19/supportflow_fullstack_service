@@ -161,3 +161,10 @@ SET
   default_category = EXCLUDED.default_category,
   escalation_email = EXCLUDED.escalation_email,
   is_active = EXCLUDED.is_active;
+
+  --active test ticket's sla_due_at into the past
+  UPDATE public.tickets
+SET priority = 'Medium',
+    status = 'Triaged',
+    sla_due_at = NOW() - INTERVAL '10 minutes'
+WHERE id = (SELECT id FROM public.tickets WHERE status NOT IN ('Resolved', 'Closed') LIMIT 1);
