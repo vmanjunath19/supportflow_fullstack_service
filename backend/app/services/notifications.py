@@ -6,6 +6,7 @@ from email.message import EmailMessage
 from typing import Any, Optional
 from urllib.parse import urlencode
 from uuid import UUID
+from app.services.retry_queue import enqueue_failed_dispatch
 
 import httpx
 
@@ -249,14 +250,29 @@ async def dispatch_routing_notifications(
     try:
         results["channels"]["slack"] = await send_slack_notification(payload)
     except Exception as exc:
-        logger.exception("Slack notification failed for %s", payload.formatted_ticket_id)
-        results["channels"]["slack"] = {"channel": "slack", "status": "error", "error": str(exc)}
+        logger.exception("Slack notification failed for %s; queueing retry", payload.formatted_ticket_id)
+        results["channels"]["slack"] = {"channel": "slack", "status": "queued_retry", "error": str(exc)}
+        enqueue_failed_dispatch(
+            supabase_client,
+            ticket_id=payload.ticket_id,
+            channel="slack",
+            endpoint_url=os.getenv("SLACK_WEBHOOK_URL", "").strip() or None,
+            payload=build_slack_webhook_body(payload),
+            error_message=str(exc),
+        )
 
     try:
         results["channels"]["email"] = send_email_notification(payload)
     except Exception as exc:
-        logger.exception("Email notification failed for %s", payload.formatted_ticket_id)
-        results["channels"]["email"] = {"channel": "email", "status": "error", "error": str(exc)}
+        logger.exception("Email notification failed for %s; queueing retry", payload.formatted_ticket_id)
+        results["channels"]["email"] = {"channel": "email", "status": "queued_retry", "error": str(exc)}
+        enqueue_failed_dispatch(
+            supabase_client,
+            ticket_id=payload.ticket_id,
+            channel="email",
+            payload=payload.to_dict(),
+            error_message=str(exc),
+        )
 
     if supabase_client is not None:
         try:

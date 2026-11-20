@@ -12,6 +12,7 @@ class AutomatedActor(str, Enum):
     ROUTING_ENGINE = "system:rule_routing_engine"
     SLA_WORKER = "system:sla_escalation_worker"
     NOTIFICATION_WORKER = "system:notification_worker"
+    RETRY_WORKER = "system:retry_dlq_worker"
 
 
 class AutomatedEventType(str, Enum):
@@ -20,6 +21,9 @@ class AutomatedEventType(str, Enum):
     SLA_WARNING_NEAR_BREACH = "SLA_WARNING_NEAR_BREACH"
     SLA_BREACHED_ESCALATED = "SLA_BREACHED_ESCALATED"
     NOTIFICATION_DISPATCHED = "NOTIFICATION_DISPATCHED"
+    DISPATCH_QUEUED_FOR_RETRY = "DISPATCH_QUEUED_FOR_RETRY"
+    RETRY_SUCCEEDED = "RETRY_SUCCEEDED"
+    DEAD_LETTER_EXHAUSTED = "DEAD_LETTER_EXHAUSTED"
 
 
 @dataclass(frozen=True)
