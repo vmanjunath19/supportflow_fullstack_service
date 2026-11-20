@@ -123,3 +123,41 @@ CREATE TRIGGER trg_tickets_after_insert_webhook
   AFTER INSERT ON public.tickets
   FOR EACH ROW
   EXECUTE FUNCTION public.fn_dispatch_ticket_created_webhook();
+
+-- testing webhook is working
+
+INSERT INTO public.tickets (title, description, category, priority, requester_email)
+VALUES (
+  'Webhook trigger verification',
+  'Testing single AFTER INSERT pg_net webhook dispatch',
+  'Software',
+  'High',
+  'sarah.jenkins@company.com'
+);
+
+SELECT unnest(enum_range(NULL::public.ticket_category)) AS valid_category;
+
+SELECT ticket_id, event_type, new_state, created_at
+FROM public.ticket_events
+WHERE event_type = 'WEBHOOK_DISPATCHED'
+ORDER BY created_at DESC
+LIMIT 5;
+
+--Ensure the Fallback & Target Teams Exist in support_teams
+select *
+from information_schema.columns
+where table_name = 'support_teams'
+
+INSERT INTO public.support_teams (name, default_category, escalation_email, is_active)
+VALUES
+  ('IT Field Support', 'Hardware', 'field-support@supportflow.local', true),
+  ('Application Support', 'Software', 'app-support@supportflow.local', true),
+  ('Network Operations', 'Network', 'netops-oncall@supportflow.local', true),
+  ('Identity & Security', 'Access & IAM', 'secops-oncall@supportflow.local', true),
+  ('Cloud & DevOps', 'Database & Cloud', 'devops-oncall@supportflow.local', true),
+  ('General Triage Desk', NULL, 'triage-desk@supportflow.local', true)
+ON CONFLICT (name) DO UPDATE
+SET
+  default_category = EXCLUDED.default_category,
+  escalation_email = EXCLUDED.escalation_email,
+  is_active = EXCLUDED.is_active;
