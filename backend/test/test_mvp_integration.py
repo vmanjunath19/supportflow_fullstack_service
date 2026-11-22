@@ -316,6 +316,7 @@ def test_03_high_impact_software_ticket_escalates_to_cloud_devops(integration_en
         ticket_id=tid,
         ticket_number=4003,
         title="Production billing API 500 errors",
+        description="Billing service throwing internal server errors.",
         category="Software",
         priority="Urgent",
     )
@@ -338,6 +339,7 @@ def test_04_other_category_routes_to_general_triage_fallback(integration_env):
         ticket_id=tid,
         ticket_number=4004,
         title="New hire ergonomic desk request",
+        description="Standard ergonomic desk chair and monitor arm setup.",
         category="Other",
         priority="Low",
     )
@@ -481,7 +483,11 @@ def test_09_state_machine_enforces_valid_flow_and_rejects_closed_to_new(integrat
     for next_state in ["In Progress", "Resolved", "Closed"]:
         res = client.post(
             f"/api/v1/webhooks/tickets/{tid}/transition",
-            json={"target_status": next_state, "actor": "agent:tester"},
+            json={
+                "target_status": next_state,
+                "actor": "agent:tester",
+                "resolution_notes": "Upgraded VPN client and verified tunnel stability.",
+            },
         )
         assert res.status_code == 200
         assert res.json()["new_status"] == next_state

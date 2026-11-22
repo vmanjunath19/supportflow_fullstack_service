@@ -33,7 +33,7 @@ from app.schemas.classification import (
 
 from app.services.routing import evaluate_routing_rule
 
-router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
+router = APIRouter(tags=["Webhooks"])
 
 WEBHOOK_SECRET = os.getenv("TICKET_CREATED_WEBHOOK_SECRET", "sf_whsec_change_me_in_production")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -85,6 +85,7 @@ class TestNotificationRequest(BaseModel):
 class TicketTransitionRequest(BaseModel):
     target_status: str
     actor: str = "agent:workspace_ui"
+    resolution_notes: Optional[str] = None
 
 
 @router.post("/ticket-created", status_code=status.HTTP_200_OK)
@@ -169,11 +170,13 @@ async def handle_ticket_created_webhook(
         teams=active_teams,
     )
 
-    # Apply explicit keyword team override (e.g., KW-02 payment down -> Cloud & DevOps)
-    matched_team_record = next(
-        (t for t in active_teams if t["name"] == classification.assigned_team_name),
-        None,
-    )
+    # Apply keyword team override only when core routing didn't already apply high-impact Software escalation
+    matched_team_record = None
+    if not decision.escalation_applied:
+        matched_team_record = next(
+            (t for t in active_teams if t["name"] == classification.assigned_team_name),
+            None,
+        )
     target_team_id = (
         matched_team_record["id"] if matched_team_record else decision.team_id
     )
@@ -261,7 +264,7 @@ async def handle_ticket_created_webhook(
             supabase,
             ticket_id=payload.record.id,
             actor=AutomatedActor.ROUTING_ENGINE,
-            event_type=AutomatedEventType.SLA_BREACH_ESCALATED,
+            event_type=AutomatedEventType.SLA_BREACHED_ESCALATED,
             previous_state=raw_priority,
             new_state=classification.effective_priority,
             metadata={
@@ -372,21 +375,27 @@ async def transition_ticket_status(
 
     ticket_resp = (
         supabase.table("tickets")
-        .select("id, ticket_number, status, team_id")
+        .select("id, ticket_number, status, team_id, resolution_notes")
         .eq("id", str(ticket_id))
         .single()
         .execute()
     )
     ticket = ticket_resp.data
     if not ticket:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Ticket not found.",
+        )
 
     current_status = ticket["status"]
+    effective_notes = req.resolution_notes or ticket.get("resolution_notes")
+
     try:
         validate_ticket_transition(
             current_status=current_status,
             target_status=req.target_status,
             team_id=ticket.get("team_id"),
+            resolution_notes=effective_notes,
         )
     except (IllegalStateTransitionError, ValueError) as exc:
         raise HTTPException(
@@ -402,9 +411,14 @@ async def transition_ticket_status(
         }
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    supabase.table("tickets").update(
-        {"status": req.target_status, "updated_at": now_iso}
-    ).eq("id", str(ticket_id)).execute()
+    update_fields: dict[str, Any] = {
+        "status": req.target_status,
+        "updated_at": now_iso,
+    }
+    if req.resolution_notes:
+        update_fields["resolution_notes"] = req.resolution_notes
+
+    supabase.table("tickets").update(update_fields).eq("id", str(ticket_id)).execute()
 
     record_audit_event(
         supabase,

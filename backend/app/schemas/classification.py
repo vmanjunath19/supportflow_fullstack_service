@@ -101,7 +101,7 @@ class SLATargetBreakdown(BaseModel):
 
 class TicketClassificationResponse(BaseModel):
     """
-    Structured Pydantic v2 response returned by the classification engine.
+    Structured Pydantic v2 response returned by POST /api/v1/classify.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -113,5 +113,9 @@ class TicketClassificationResponse(BaseModel):
     effective_priority: TicketPriority
     assigned_team_name: str
     escalated: bool
+    rationale: str = Field(
+        ...,
+        description="Human-readable explanation of matched rules, heuristics, team routing, and SLA target.",
+    )
     matched_rules: list[str] = Field(default_factory=list)
     sla: SLATargetBreakdown

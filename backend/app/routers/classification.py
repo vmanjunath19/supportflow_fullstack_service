@@ -7,18 +7,51 @@ from app.schemas.classification import (
     TicketClassificationRequest,
     TicketClassificationResponse,
 )
-from app.services.classification import SLA_TARGETS, classify_incident
+from app.services.classification import (
+    ClassificationResult,
+    SLA_TARGETS,
+    classify_incident,
+)
 
 router = APIRouter(tags=["Classification"])
+
+def _build_classification_rationale(
+    *,
+    requested_priority: str,
+    result: ClassificationResult,
+    response_minutes: int,
+    resolution_hours: int,
+    ) -> str:
+    """Constructs a clear, auditable summary explaining the triage engine's decision."""
+    priority_note = (
+        f"Escalated priority from '{requested_priority}' to '{result.effective_priority}'"
+        if result.escalated
+        else f"Maintained priority at '{result.effective_priority}'"
+    )
+    rules_note = (
+        ", ".join(result.matched_rules)
+        if result.matched_rules
+        else "default category mapping"
+    )
+    return (
+        f"{priority_note} and assigned to '{result.assigned_team_name}' "
+        f"(category: '{result.effective_category}') based on [{rules_note}]. "
+        f"Applied {response_minutes}m response / {resolution_hours}h resolution SLA."
+    )
 
 
 @router.post(
     "/classify",
     response_model=TicketClassificationResponse,
     status_code=status.HTTP_200_OK,
-    summary="Classify incident severity, team assignment, and SLA targets",
+    summary="Classify ticket priority, team assignment, SLA targets, and triage rationale",
+    description=(
+        "Evaluates an incoming support ticket against the Impact × Urgency matrix, "
+        "domain keyword rules, and NLP urgency/blast-radius heuristics to return "
+        "the computed priority, target support team, SLA deadlines, and rationale."
+    ),
 )
-async def classify_ticket_endpoint(
+async def classify_ticket(
     payload: TicketClassificationRequest,
 ) -> TicketClassificationResponse:
     now = datetime.now(timezone.utc)
@@ -36,6 +69,13 @@ async def classify_ticket_endpoint(
     response_minutes = int(sla_cfg["response"].total_seconds() // 60)
     resolution_hours = int(sla_cfg["resolution"].total_seconds() // 3600)
 
+    rationale = _build_classification_rationale(
+        requested_priority=payload.requested_priority.value,
+        result=result,
+        response_minutes=response_minutes,
+        resolution_hours=resolution_hours,
+    )
+
     return TicketClassificationResponse(
         ticket_id=payload.ticket_id,
         requested_category=payload.category,
@@ -44,6 +84,7 @@ async def classify_ticket_endpoint(
         effective_priority=result.effective_priority,
         assigned_team_name=result.assigned_team_name,
         escalated=result.escalated,
+        rationale=rationale,
         matched_rules=result.matched_rules,
         sla=SLATargetBreakdown(
             response_target_minutes=response_minutes,

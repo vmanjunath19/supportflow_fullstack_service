@@ -38,29 +38,17 @@ class IllegalStateTransitionError(ValueError):
 def validate_ticket_transition(
     current_status: str,
     target_status: str,
-    *,
     team_id: str | None = None,
+    resolution_notes: str | None = None,
 ) -> None:
-    """
-    Validates a ticket status transition against ALLOWED_TRANSITIONS and relational
-    invariants (e.g., Triaged / In Progress require an assigned team_id).
-    """
-    if current_status not in VALID_STATUSES:
-        raise ValueError(f"Unknown current ticket status: '{current_status}'.")
-    if target_status not in VALID_STATUSES:
-        raise ValueError(
-            f"Invalid target ticket status: '{target_status}'. "
-            f"Must be one of {sorted(VALID_STATUSES)}."
-        )
-
     if current_status == target_status:
         return
 
-    allowed = ALLOWED_TRANSITIONS[current_status]
+    allowed = ALLOWED_TRANSITIONS.get(current_status, set())
     if target_status not in allowed:
         raise IllegalStateTransitionError(current_status, target_status, allowed)
 
     if target_status in {"Triaged", "In Progress"} and not team_id:
         raise ValueError(
-            f"Cannot transition ticket to '{target_status}' without an assigned support team (team_id is required)."
+            f"Ticket cannot move to '{target_status}' without an assigned support team."
         )

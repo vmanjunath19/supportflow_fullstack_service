@@ -40,6 +40,7 @@ async def scheduled_retry_job() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting SupportFlow FastAPI automation microservice")
     scheduler.add_job(
         scheduled_sla_job,
         trigger=IntervalTrigger(seconds=SLA_POLL_INTERVAL_SECONDS),
@@ -55,6 +56,7 @@ async def lifespan(app: FastAPI):
         max_instances=1,
     )
     scheduler.start()
+    app.state.scheduler = scheduler
     logger.info(
         "APScheduler workers started (sla_interval=%ss, retry_interval=%ss)",
         SLA_POLL_INTERVAL_SECONDS,
@@ -81,7 +83,7 @@ app.add_middleware(
 
 app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 app.include_router(health.router)
-app.include_router(classification.router, prefix="/api/v1/tickets", tags=["Classification"])
+app.include_router(classification.router, prefix="/api/v1", tags=["Classification"])
 
 
 @app.get("/health")
@@ -116,11 +118,3 @@ async def list_dead_letter_entries(status_filter: str | None = None):
     resp = query.execute()
     items = resp.data or []
     return {"count": len(items), "items": items}
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting SupportFlow FastAPI automation microservice")
-    yield
-    logger.info("Shutting down SupportFlow FastAPI automation microservice")
-
-from app.routers import classification, health, webhooks
