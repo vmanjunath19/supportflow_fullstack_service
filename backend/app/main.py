@@ -8,14 +8,15 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
-
-from app.routers import webhooks
+from app.routers import classification, health, webhooks
 from app.routers.webhooks import get_supabase_admin
 from app.services.sla_escalation import run_sla_escalation_sweep
 from app.services.retry_queue import process_retry_queue
 
-logging.basicConfig(level=logging.INFO)
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger("supportflow.main")
 
 SLA_POLL_INTERVAL_SECONDS = int(os.getenv("SLA_POLL_INTERVAL_SECONDS", "60"))
@@ -36,7 +37,6 @@ async def scheduled_retry_job() -> None:
         await process_retry_queue(supabase)
     except Exception:
         logger.exception("Scheduled retry queue sweep failed")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -79,7 +79,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(webhooks.router)
+app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
+app.include_router(health.router)
+app.include_router(classification.router, prefix="/api/v1/tickets", tags=["Classification"])
 
 
 @app.get("/health")
@@ -114,3 +116,11 @@ async def list_dead_letter_entries(status_filter: str | None = None):
     resp = query.execute()
     items = resp.data or []
     return {"count": len(items), "items": items}
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting SupportFlow FastAPI automation microservice")
+    yield
+    logger.info("Shutting down SupportFlow FastAPI automation microservice")
+
+from app.routers import classification, health, webhooks

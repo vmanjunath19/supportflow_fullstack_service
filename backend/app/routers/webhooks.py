@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel
 from supabase import Client, create_client
+from app.services.classification import classify_incident
 
 from app.services.notifications import (
     build_notification_payload,
@@ -23,13 +24,18 @@ from app.services.state_machine import (
     validate_ticket_transition,
 )
 
+from app.schemas.classification import (
+    ImpactLevel,
+    TicketCategory,
+    TicketPriority,
+    UrgencyLevel,
+)
+
 from app.services.routing import evaluate_routing_rule
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
 
-WEBHOOK_SECRET = os.getenv(
-    "TICKET_CREATED_WEBHOOK_SECRET", "sf_whsec_change_me_in_production"
-)
+WEBHOOK_SECRET = os.getenv("TICKET_CREATED_WEBHOOK_SECRET", "sf_whsec_change_me_in_production")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
@@ -113,6 +119,28 @@ async def handle_ticket_created_webhook(
             "ticket_id": str(payload.record.id),
         }
 
+    # Normalize Enum or str fields from the validated Pydantic record
+    raw_category = (
+        payload.record.category.value
+        if hasattr(payload.record.category, "value")
+        else str(payload.record.category)
+    )
+    raw_priority = (
+        payload.record.priority.value
+        if hasattr(payload.record.priority, "value")
+        else str(payload.record.priority)
+    )
+    raw_status = (
+        payload.record.status.value
+        if hasattr(payload.record.status, "value")
+        else str(payload.record.status)
+    )
+    raw_impact = getattr(payload.record, "impact", None)
+    raw_impact = raw_impact.value if hasattr(raw_impact, "value") else raw_impact
+
+    raw_urgency = getattr(payload.record, "urgency", None)
+    raw_urgency = raw_urgency.value if hasattr(raw_urgency, "value") else raw_urgency
+
     supabase = get_supabase_admin()
 
     # 3. Load active support teams from Supabase
@@ -122,74 +150,151 @@ async def handle_ticket_created_webhook(
         .eq("is_active", True)
         .execute()
     )
+    active_teams = teams_resp.data or []
 
-    # 4. Evaluate rule-based routing engine
-    decision = evaluate_routing_rule(
-        category=payload.record.category,
-        priority=payload.record.priority,
-        teams=teams_resp.data or [],
+    # 4. Run incident classification (keyword signals + Impact x Urgency + SLA target)
+    classification = classify_incident(
+        title=payload.record.title,
+        description=payload.record.description,
+        category=raw_category,
+        requested_priority=raw_priority,
+        impact=raw_impact,
+        urgency=raw_urgency,
     )
 
-    if decision.team_id is None:
+    # 5. Evaluate rule-based routing engine using classified category & priority
+    decision = evaluate_routing_rule(
+        category=classification.effective_category,
+        priority=classification.effective_priority,
+        teams=active_teams,
+    )
+
+    # Apply explicit keyword team override (e.g., KW-02 payment down -> Cloud & DevOps)
+    matched_team_record = next(
+        (t for t in active_teams if t["name"] == classification.assigned_team_name),
+        None,
+    )
+    target_team_id = (
+        matched_team_record["id"] if matched_team_record else decision.team_id
+    )
+    target_team_name = (
+        matched_team_record["name"]
+        if matched_team_record
+        else decision.target_team_name
+    )
+    target_escalation_email = (
+        matched_team_record["escalation_email"]
+        if matched_team_record
+        else decision.escalation_email
+    )
+    combined_rule = (
+        f"{decision.matched_rule} | rules={','.join(classification.matched_rules)}"
+        if classification.matched_rules
+        else decision.matched_rule
+    )
+    escalation_applied = decision.escalation_applied or classification.escalated
+
+    if target_team_id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="No support teams configured in database for routing.",
         )
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    next_status = "Triaged" if payload.record.status == "New" else payload.record.status
+    next_status = "Triaged" if raw_status == "New" else raw_status
 
-    # 5. Update ticket assignment & status (UPDATE only -> zero INSERT trigger loops)
+    raw_sla = getattr(payload.record, "sla_due_at", None)
+    if isinstance(raw_sla, datetime):
+        effective_sla_due_at = raw_sla.isoformat()
+    elif isinstance(raw_sla, str) and raw_sla.strip():
+        effective_sla_due_at = raw_sla
+    else:
+        effective_sla_due_at = classification.sla_due_at.isoformat()
+
+    # 6. Validate state transition & relational team invariant before DB update
+    try:
+        validate_ticket_transition(
+            current_status=raw_status,
+            target_status=next_status,
+            team_id=str(target_team_id),
+        )
+    except (IllegalStateTransitionError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # 7. Update ticket assignment, classified priority/category, SLA & status
     supabase.table("tickets").update(
         {
-            "team_id": str(decision.team_id),
+            "team_id": str(target_team_id),
+            "category": classification.effective_category,
+            "priority": classification.effective_priority,
             "status": next_status,
+            "sla_due_at": effective_sla_due_at,
             "updated_at": now_iso,
         }
     ).eq("id", str(payload.record.id)).execute()
 
-    # 6. Record immutable AUTO_ROUTED audit event
+    # 8. Record immutable AUTO_ROUTED audit event
     record_audit_event(
         supabase,
         ticket_id=payload.record.id,
         actor=AutomatedActor.ROUTING_ENGINE,
         event_type=AutomatedEventType.AUTO_ROUTED,
         previous_state="Unassigned",
-        new_state=decision.target_team_name,
+        new_state=target_team_name,
         metadata={
-            "matched_rule": decision.matched_rule,
+            "matched_rule": combined_rule,
             "is_fallback": decision.is_fallback,
-            "escalation_applied": decision.escalation_applied,
-            "priority": payload.record.priority,
-            "category": payload.record.category,
+            "escalation_applied": escalation_applied,
+            "requested_priority": raw_priority,
+            "effective_priority": classification.effective_priority,
+            "effective_category": classification.effective_category,
+            "sla_due_at": effective_sla_due_at,
         },
     )
 
-    # 7. Record automated status transition (New -> Triaged) if status changed
-    if next_status != payload.record.status:
+    # 9. Record automated priority escalation if keyword/matrix rules elevated priority
+    if classification.effective_priority != raw_priority:
+        record_audit_event(
+            supabase,
+            ticket_id=payload.record.id,
+            actor=AutomatedActor.ROUTING_ENGINE,
+            event_type=AutomatedEventType.SLA_BREACH_ESCALATED,
+            previous_state=raw_priority,
+            new_state=classification.effective_priority,
+            metadata={
+                "trigger": "incident_classification_rules",
+                "matched_rules": classification.matched_rules,
+            },
+        )
+
+    # 10. Record automated status transition (New -> Triaged) if status changed
+    if next_status != raw_status:
         record_audit_event(
             supabase,
             ticket_id=payload.record.id,
             actor=AutomatedActor.ROUTING_ENGINE,
             event_type=AutomatedEventType.STATUS_TRANSITIONED,
-            previous_state=payload.record.status,
+            previous_state=raw_status,
             new_state=next_status,
             metadata={"trigger": "auto_routing_completion"},
         )
 
-    # 8. Build & queue non-blocking Slack + Email team alert
+    # 11. Build & queue non-blocking Slack + Email team alert
     notification_payload = build_notification_payload(
         ticket_id=payload.record.id,
         ticket_number=payload.record.ticket_number,
-        priority=payload.record.priority,
-        category=payload.record.category,
+        priority=classification.effective_priority,
+        category=classification.effective_category,
         title=payload.record.title,
         description=payload.record.description,
-        assigned_team=decision.target_team_name,
-        escalation_email=decision.escalation_email,
-        requester_email=payload.record.requester_email,
-        matched_rule=decision.matched_rule,
-        escalation_applied=decision.escalation_applied,
+        assigned_team=target_team_name,
+        escalation_email=target_escalation_email,
+        requester_email=str(payload.record.requester_email),
+        matched_rule=combined_rule,
+        escalation_applied=escalation_applied,
     )
     background_tasks.add_task(
         dispatch_routing_notifications,
@@ -204,12 +309,14 @@ async def handle_ticket_created_webhook(
         "event_id": dedupe_key,
         "ticket_id": str(payload.record.id),
         "ticket_number": payload.record.ticket_number,
-        "assigned_team": decision.target_team_name,
-        "matched_rule": decision.matched_rule,
+        "assigned_team": target_team_name,
+        "effective_priority": classification.effective_priority,
+        "effective_category": classification.effective_category,
+        "sla_due_at": effective_sla_due_at,
+        "matched_rule": combined_rule,
         "notification_queued": True,
         "workspace_link": notification_payload.workspace_link,
     }
-
 
 @router.post("/test-notification", status_code=status.HTTP_200_OK)
 async def trigger_test_notification(
