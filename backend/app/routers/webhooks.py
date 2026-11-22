@@ -17,6 +17,12 @@ from app.services.audit import (
     AutomatedEventType,
     record_audit_event,
 )
+
+from app.services.state_machine import (
+    IllegalStateTransitionError,
+    validate_ticket_transition,
+)
+
 from app.services.routing import evaluate_routing_rule
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
@@ -69,6 +75,10 @@ class TestNotificationRequest(BaseModel):
     assigned_team: str = "Network Operations"
     escalation_email: str = "netops-oncall@supportflow.local"
     requester_email: str = "alex.mercer@company.com"
+
+class TicketTransitionRequest(BaseModel):
+    target_status: str
+    actor: str = "agent:workspace_ui"
 
 
 @router.post("/ticket-created", status_code=status.HTTP_200_OK)
@@ -242,4 +252,66 @@ async def get_ticket_audit_events(ticket_id: UUID) -> dict[str, Any]:
         "ticket_id": str(ticket_id),
         "event_count": len(events),
         "events": events,
+    }
+
+
+@router.post("/tickets/{ticket_id}/transition", status_code=status.HTTP_200_OK)
+async def transition_ticket_status(
+    ticket_id: UUID,
+    req: TicketTransitionRequest,
+) -> dict[str, Any]:
+    """Validates and executes a state machine transition, recording an immutable audit event."""
+    supabase = get_supabase_admin()
+
+    ticket_resp = (
+        supabase.table("tickets")
+        .select("id, ticket_number, status, team_id")
+        .eq("id", str(ticket_id))
+        .single()
+        .execute()
+    )
+    ticket = ticket_resp.data
+    if not ticket:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found.")
+
+    current_status = ticket["status"]
+    try:
+        validate_ticket_transition(
+            current_status=current_status,
+            target_status=req.target_status,
+            team_id=ticket.get("team_id"),
+        )
+    except (IllegalStateTransitionError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    if current_status == req.target_status:
+        return {
+            "status": "unchanged",
+            "ticket_id": str(ticket_id),
+            "current_status": current_status,
+        }
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    supabase.table("tickets").update(
+        {"status": req.target_status, "updated_at": now_iso}
+    ).eq("id", str(ticket_id)).execute()
+
+    record_audit_event(
+        supabase,
+        ticket_id=ticket_id,
+        actor=req.actor,
+        event_type=AutomatedEventType.STATUS_TRANSITIONED,
+        previous_state=current_status,
+        new_state=req.target_status,
+        metadata={"validated_by": "state_machine_guard"},
+    )
+
+    return {
+        "status": "transitioned",
+        "ticket_id": str(ticket_id),
+        "previous_status": current_status,
+        "new_status": req.target_status,
     }
