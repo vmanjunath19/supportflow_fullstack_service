@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
-
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Request, status
 
 from app.schemas.classification import (
     SLATargetBreakdown,
@@ -51,8 +50,10 @@ def _build_classification_rationale(
         "the computed priority, target support team, SLA deadlines, and rationale."
     ),
 )
+
 async def classify_ticket(
     payload: TicketClassificationRequest,
+    request: Request,
 ) -> TicketClassificationResponse:
     now = datetime.now(timezone.utc)
     result = classify_incident(
@@ -75,6 +76,20 @@ async def classify_ticket(
         response_minutes=response_minutes,
         resolution_hours=resolution_hours,
     )
+
+    # Attach non-sensitive triage decision metadata for CorrelationLoggingMiddleware
+    request.state.decision_metadata = {
+        "ticket_id": str(payload.ticket_id) if payload.ticket_id else None,
+        "requested_priority": payload.requested_priority.value,
+        "effective_priority": result.effective_priority,
+        "requested_category": payload.category.value,
+        "effective_category": result.effective_category,
+        "assigned_team": result.assigned_team_name,
+        "escalated": result.escalated,
+        "matched_rules": result.matched_rules,
+        "sla_response_minutes": response_minutes,
+        "sla_resolution_hours": resolution_hours,
+    }
 
     return TicketClassificationResponse(
         ticket_id=payload.ticket_id,

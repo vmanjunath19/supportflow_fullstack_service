@@ -13,6 +13,10 @@ from app.routers.webhooks import get_supabase_admin
 from app.services.sla_escalation import run_sla_escalation_sweep
 from app.services.retry_queue import process_retry_queue
 
+from app.core.logging import configure_structured_logging
+from app.middleware.request_logging import CorrelationLoggingMiddleware
+
+configure_structured_logging()
 
 load_dotenv()
 
@@ -68,10 +72,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="SupportFlow Automation & Routing Service",
+    title="SupportFlow Incident Automation API",
     version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
     lifespan=lifespan,
 )
+
+app.add_middleware(CorrelationLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
