@@ -1,0 +1,844 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SupportFlow Incident Automation API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/webhooks/ticket-created": {
+      "post": {
+        "tags": [
+          "Webhooks",
+          "Webhooks"
+        ],
+        "summary": "Handle Ticket Created Webhook",
+        "operationId": "handle_ticket_created_webhook_api_v1_webhooks_ticket_created_post",
+        "parameters": [
+          {
+            "name": "x-webhook-secret",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Webhook-Secret"
+            }
+          },
+          {
+            "name": "x-webhook-event-id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "X-Webhook-Event-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketCreatedWebhookPayload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Handle Ticket Created Webhook Api V1 Webhooks Ticket Created Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/test-notification": {
+      "post": {
+        "tags": [
+          "Webhooks",
+          "Webhooks"
+        ],
+        "summary": "Trigger Test Notification",
+        "description": "Dispatches a test Slack/Email notification and returns the exact payload for inspection.",
+        "operationId": "trigger_test_notification_api_v1_webhooks_test_notification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestNotificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Trigger Test Notification Api V1 Webhooks Test Notification Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/tickets/{ticket_id}/audit-events": {
+      "get": {
+        "tags": [
+          "Webhooks",
+          "Webhooks"
+        ],
+        "summary": "Get Ticket Audit Events",
+        "description": "Returns the chronological, append-only audit history for a ticket.",
+        "operationId": "get_ticket_audit_events_api_v1_webhooks_tickets__ticket_id__audit_events_get",
+        "parameters": [
+          {
+            "name": "ticket_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Ticket Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Ticket Audit Events Api V1 Webhooks Tickets  Ticket Id  Audit Events Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/tickets/{ticket_id}/transition": {
+      "post": {
+        "tags": [
+          "Webhooks",
+          "Webhooks"
+        ],
+        "summary": "Transition Ticket Status",
+        "description": "Validates and executes a state machine transition, recording an immutable audit event.",
+        "operationId": "transition_ticket_status_api_v1_webhooks_tickets__ticket_id__transition_post",
+        "parameters": [
+          {
+            "name": "ticket_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Ticket Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketTransitionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Transition Ticket Status Api V1 Webhooks Tickets  Ticket Id  Transition Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/classify": {
+      "post": {
+        "tags": [
+          "Classification",
+          "Classification"
+        ],
+        "summary": "Classify ticket priority, team assignment, SLA targets, and triage rationale",
+        "description": "Evaluates an incoming support ticket against the Impact \u00d7 Urgency matrix, domain keyword rules, and NLP urgency/blast-radius heuristics to return the computed priority, target support team, SLA deadlines, and rationale.",
+        "operationId": "classify_ticket_api_v1_classify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TicketClassificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketClassificationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workers/sla-sweep": {
+      "post": {
+        "tags": [
+          "Workers"
+        ],
+        "summary": "Trigger Manual Sla Sweep",
+        "description": "Allows immediate manual triggering of the SLA breach & warning sweep.",
+        "operationId": "trigger_manual_sla_sweep_api_v1_workers_sla_sweep_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workers/retry-sweep": {
+      "post": {
+        "tags": [
+          "Workers"
+        ],
+        "summary": "Trigger Manual Retry Sweep",
+        "description": "Immediately processes due items in `webhook_dead_letters`.",
+        "operationId": "trigger_manual_retry_sweep_api_v1_workers_retry_sweep_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workers/dead-letters": {
+      "get": {
+        "tags": [
+          "Workers"
+        ],
+        "summary": "List Dead Letter Entries",
+        "description": "Lists queued, recovered, and dead-lettered external dispatch records.",
+        "operationId": "list_dead_letter_entries_api_v1_workers_dead_letters_get",
+        "parameters": [
+          {
+            "name": "status_filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Filter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImpactLevel": {
+        "type": "string",
+        "enum": [
+          "High",
+          "Medium",
+          "Low"
+        ],
+        "title": "ImpactLevel"
+      },
+      "SLATargetBreakdown": {
+        "properties": {
+          "response_target_minutes": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Response Target Minutes"
+          },
+          "resolution_target_hours": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Resolution Target Hours"
+          },
+          "response_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Response Due At"
+          },
+          "resolution_due_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Resolution Due At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "response_target_minutes",
+          "resolution_target_hours",
+          "response_due_at",
+          "resolution_due_at"
+        ],
+        "title": "SLATargetBreakdown"
+      },
+      "TestNotificationRequest": {
+        "properties": {
+          "ticket_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Id"
+          },
+          "ticket_number": {
+            "type": "integer",
+            "title": "Ticket Number",
+            "default": 1099
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority",
+            "default": "Urgent"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": "Network"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary",
+            "default": "Core VPN gateway packet loss in Edinburgh office"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": "Intermittent packet loss exceeding 18% across primary IPsec tunnel."
+          },
+          "assigned_team": {
+            "type": "string",
+            "title": "Assigned Team",
+            "default": "Network Operations"
+          },
+          "escalation_email": {
+            "type": "string",
+            "title": "Escalation Email",
+            "default": "netops-oncall@supportflow.local"
+          },
+          "requester_email": {
+            "type": "string",
+            "title": "Requester Email",
+            "default": "alex.mercer@company.com"
+          }
+        },
+        "type": "object",
+        "title": "TestNotificationRequest"
+      },
+      "TicketCategory": {
+        "type": "string",
+        "enum": [
+          "Hardware",
+          "Software",
+          "Network",
+          "Access & IAM",
+          "Database & Cloud",
+          "Other"
+        ],
+        "title": "TicketCategory"
+      },
+      "TicketClassificationRequest": {
+        "properties": {
+          "ticket_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Id",
+            "description": "Optional UUID of an existing ticket being evaluated."
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 3,
+            "title": "Title",
+            "description": "Concise summary of the incident.",
+            "examples": [
+              "Production payment gateway returning 503 errors"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 5,
+            "title": "Description",
+            "description": "Detailed symptoms, scope, and error messages.",
+            "examples": [
+              "Checkout requests in EU region failing since 14:05 UTC."
+            ]
+          },
+          "category": {
+            "$ref": "#/components/schemas/TicketCategory",
+            "description": "Initial functional category selected by the requester.",
+            "default": "Other"
+          },
+          "requested_priority": {
+            "$ref": "#/components/schemas/TicketPriority",
+            "description": "Baseline priority requested at submission.",
+            "default": "Medium"
+          },
+          "impact": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImpactLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional business blast-radius dimension (High, Medium, Low)."
+          },
+          "urgency": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UrgencyLevel"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional time-sensitivity dimension (High, Medium, Low)."
+          },
+          "requester_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "email"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requester Email",
+            "description": "Optional validated email address of the ticket submitter."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "description"
+        ],
+        "title": "TicketClassificationRequest",
+        "description": "Strict Pydantic v2 request schema for incident classification & SLA evaluation.\nRejects unknown extra fields, empty/whitespace-only strings, and invalid enums\nwith standard HTTP 422 Unprocessable Entity field validation errors."
+      },
+      "TicketClassificationResponse": {
+        "properties": {
+          "ticket_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket Id"
+          },
+          "requested_category": {
+            "$ref": "#/components/schemas/TicketCategory"
+          },
+          "effective_category": {
+            "$ref": "#/components/schemas/TicketCategory"
+          },
+          "requested_priority": {
+            "$ref": "#/components/schemas/TicketPriority"
+          },
+          "effective_priority": {
+            "$ref": "#/components/schemas/TicketPriority"
+          },
+          "assigned_team_name": {
+            "type": "string",
+            "title": "Assigned Team Name"
+          },
+          "escalated": {
+            "type": "boolean",
+            "title": "Escalated"
+          },
+          "rationale": {
+            "type": "string",
+            "title": "Rationale",
+            "description": "Human-readable explanation of matched rules, heuristics, team routing, and SLA target."
+          },
+          "matched_rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Matched Rules"
+          },
+          "sla": {
+            "$ref": "#/components/schemas/SLATargetBreakdown"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "requested_category",
+          "effective_category",
+          "requested_priority",
+          "effective_priority",
+          "assigned_team_name",
+          "escalated",
+          "rationale",
+          "sla"
+        ],
+        "title": "TicketClassificationResponse",
+        "description": "Structured Pydantic v2 response returned by POST /api/v1/classify."
+      },
+      "TicketCreatedWebhookPayload": {
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Event Id"
+          },
+          "event_type": {
+            "type": "string",
+            "title": "Event Type"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Occurred At"
+          },
+          "record": {
+            "$ref": "#/components/schemas/TicketRecordPayload"
+          }
+        },
+        "type": "object",
+        "required": [
+          "event_id",
+          "event_type",
+          "occurred_at",
+          "record"
+        ],
+        "title": "TicketCreatedWebhookPayload"
+      },
+      "TicketPriority": {
+        "type": "string",
+        "enum": [
+          "Low",
+          "Medium",
+          "High",
+          "Urgent"
+        ],
+        "title": "TicketPriority"
+      },
+      "TicketRecordPayload": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "ticket_number": {
+            "type": "integer",
+            "title": "Ticket Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "priority": {
+            "type": "string",
+            "title": "Priority"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "requester_email": {
+            "type": "string",
+            "title": "Requester Email"
+          },
+          "team_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          },
+          "sla_due_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Due At"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "ticket_number",
+          "title",
+          "description",
+          "category",
+          "priority",
+          "status",
+          "requester_email",
+          "created_at"
+        ],
+        "title": "TicketRecordPayload"
+      },
+      "TicketTransitionRequest": {
+        "properties": {
+          "target_status": {
+            "type": "string",
+            "title": "Target Status"
+          },
+          "actor": {
+            "type": "string",
+            "title": "Actor",
+            "default": "agent:workspace_ui"
+          },
+          "resolution_notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "target_status"
+        ],
+        "title": "TicketTransitionRequest"
+      },
+      "UrgencyLevel": {
+        "type": "string",
+        "enum": [
+          "High",
+          "Medium",
+          "Low"
+        ],
+        "title": "UrgencyLevel"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}
