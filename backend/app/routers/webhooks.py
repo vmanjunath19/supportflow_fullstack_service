@@ -1,8 +1,9 @@
 import hmac
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
+import asyncio
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, status
 from pydantic import BaseModel
@@ -87,6 +88,9 @@ class TicketTransitionRequest(BaseModel):
     actor: str = "agent:workspace_ui"
     resolution_notes: Optional[str] = None
 
+CLASSIFIER_TIMEOUT_SECONDS = float(os.getenv("CLASSIFIER_TIMEOUT_SECONDS", "3.0"))
+FALLBACK_TRIAGE_PRIORITY = "Medium"
+FALLBACK_TRIAGE_TEAM = "Triage Queue"
 
 @router.post("/ticket-created", status_code=status.HTTP_200_OK)
 async def handle_ticket_created_webhook(
@@ -153,49 +157,103 @@ async def handle_ticket_created_webhook(
     )
     active_teams = teams_resp.data or []
 
-    # 4. Run incident classification (keyword signals + Impact x Urgency + SLA target)
-    classification = classify_incident(
-        title=payload.record.title,
-        description=payload.record.description,
-        category=raw_category,
-        requested_priority=raw_priority,
-        impact=raw_impact,
-        urgency=raw_urgency,
-    )
+    # 4. Run incident classification with bounded timeout & outage fallback
+    triage_fallback_applied = False
+    triage_fallback_reason: str | None = None
+    now_utc = datetime.now(timezone.utc)
 
-    # 5. Evaluate rule-based routing engine using classified category & priority
-    decision = evaluate_routing_rule(
-        category=classification.effective_category,
-        priority=classification.effective_priority,
-        teams=active_teams,
-    )
-
-    # Apply keyword team override only when core routing didn't already apply high-impact Software escalation
-    matched_team_record = None
-    if not decision.escalation_applied:
-        matched_team_record = next(
-            (t for t in active_teams if t["name"] == classification.assigned_team_name),
-            None,
+    try:
+        classification = await asyncio.wait_for(
+            asyncio.to_thread(
+                classify_incident,
+                title=payload.record.title,
+                description=payload.record.description,
+                category=raw_category,
+                requested_priority=raw_priority,
+                impact=raw_impact,
+                urgency=raw_urgency,
+            ),
+            timeout=CLASSIFIER_TIMEOUT_SECONDS,
         )
-    target_team_id = (
-        matched_team_record["id"] if matched_team_record else decision.team_id
-    )
-    target_team_name = (
-        matched_team_record["name"]
-        if matched_team_record
-        else decision.target_team_name
-    )
-    target_escalation_email = (
-        matched_team_record["escalation_email"]
-        if matched_team_record
-        else decision.escalation_email
-    )
-    combined_rule = (
-        f"{decision.matched_rule} | rules={','.join(classification.matched_rules)}"
-        if classification.matched_rules
-        else decision.matched_rule
-    )
-    escalation_applied = decision.escalation_applied or classification.escalated
+        effective_category = classification.effective_category
+        effective_priority = classification.effective_priority
+        classified_team_name = classification.assigned_team_name
+        classified_rules = list(classification.matched_rules)
+        classified_escalated = classification.escalated
+        computed_sla_due_at = classification.sla_due_at
+    except asyncio.TimeoutError:
+        triage_fallback_applied = True
+        triage_fallback_reason = f"classifier_timeout_after_{CLASSIFIER_TIMEOUT_SECONDS}s"
+        effective_category = raw_category or "Other"
+        effective_priority = FALLBACK_TRIAGE_PRIORITY
+        classified_team_name = FALLBACK_TRIAGE_TEAM
+        classified_rules = [f"fallback:{triage_fallback_reason}"]
+        classified_escalated = False
+        computed_sla_due_at = now_utc + timedelta(hours=24)
+    except Exception as exc:
+        triage_fallback_applied = True
+        triage_fallback_reason = f"classifier_error:{type(exc).__name__}"
+        effective_category = raw_category or "Other"
+        effective_priority = FALLBACK_TRIAGE_PRIORITY
+        classified_team_name = FALLBACK_TRIAGE_TEAM
+        classified_rules = [f"fallback:{triage_fallback_reason}"]
+        classified_escalated = False
+        computed_sla_due_at = now_utc + timedelta(hours=24)
+
+    # 5. Evaluate routing or resolve resilient 'Triage Queue' fallback team
+    if triage_fallback_applied:
+        triage_team_row = next(
+            (
+                t
+                for t in active_teams
+                if t["name"].strip().lower() in {"triage queue", "general triage desk"}
+            ),
+            active_teams[0] if active_teams else None,
+        )
+        target_team_id = triage_team_row["id"] if triage_team_row else None
+        target_team_name = (
+            FALLBACK_TRIAGE_TEAM if triage_team_row else FALLBACK_TRIAGE_TEAM
+        )
+        target_escalation_email = (
+            triage_team_row["escalation_email"] if triage_team_row else None
+        )
+        is_fallback_route = True
+        escalation_applied = False
+        combined_rule = f"fallback:triage_queue | rules={','.join(classified_rules)}"
+    else:
+        decision = evaluate_routing_rule(
+            category=effective_category,
+            priority=effective_priority,
+            teams=active_teams,
+        )
+
+        # Apply keyword team override only when core routing didn't already apply high-impact Software escalation
+        matched_team_record = None
+        if not decision.escalation_applied:
+            matched_team_record = next(
+                (t for t in active_teams if t["name"] == classified_team_name),
+                None,
+            )
+        target_team_id = (
+            matched_team_record["id"] if matched_team_record else decision.team_id
+        )
+        target_team_name = (
+            matched_team_record["name"]
+            if matched_team_record
+            else decision.target_team_name
+        )
+        target_escalation_email = (
+            matched_team_record["escalation_email"]
+            if matched_team_record
+            else decision.escalation_email
+        )
+        is_fallback_route = decision.is_fallback
+        combined_rule = (
+            f"{decision.matched_rule} | rules={','.join(classified_rules)}"
+            if classified_rules
+            else decision.matched_rule
+        )
+        escalation_applied = decision.escalation_applied or classified_escalated
 
     if target_team_id is None:
         raise HTTPException(
@@ -203,7 +261,7 @@ async def handle_ticket_created_webhook(
             detail="No support teams configured in database for routing.",
         )
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = now_utc.isoformat()
     next_status = "Triaged" if raw_status == "New" else raw_status
 
     raw_sla = getattr(payload.record, "sla_due_at", None)
@@ -212,7 +270,7 @@ async def handle_ticket_created_webhook(
     elif isinstance(raw_sla, str) and raw_sla.strip():
         effective_sla_due_at = raw_sla
     else:
-        effective_sla_due_at = classification.sla_due_at.isoformat()
+        effective_sla_due_at = computed_sla_due_at.isoformat()
 
     # 6. Validate state transition & relational team invariant before DB update
     try:
@@ -231,8 +289,8 @@ async def handle_ticket_created_webhook(
     supabase.table("tickets").update(
         {
             "team_id": str(target_team_id),
-            "category": classification.effective_category,
-            "priority": classification.effective_priority,
+            "category": effective_category,
+            "priority": effective_priority,
             "status": next_status,
             "sla_due_at": effective_sla_due_at,
             "updated_at": now_iso,
@@ -249,27 +307,33 @@ async def handle_ticket_created_webhook(
         new_state=target_team_name,
         metadata={
             "matched_rule": combined_rule,
-            "is_fallback": decision.is_fallback,
+            "is_fallback": is_fallback_route,
+            "triage_fallback_applied": triage_fallback_applied,
+            "triage_fallback_reason": triage_fallback_reason,
             "escalation_applied": escalation_applied,
             "requested_priority": raw_priority,
-            "effective_priority": classification.effective_priority,
-            "effective_category": classification.effective_category,
+            "effective_priority": effective_priority,
+            "effective_category": effective_category,
             "sla_due_at": effective_sla_due_at,
         },
     )
 
-    # 9. Record automated priority escalation if keyword/matrix rules elevated priority
-    if classification.effective_priority != raw_priority:
+    # 9. Record automated priority change if effective priority differs from requested priority
+    if effective_priority != raw_priority:
         record_audit_event(
             supabase,
             ticket_id=payload.record.id,
             actor=AutomatedActor.ROUTING_ENGINE,
             event_type=AutomatedEventType.SLA_BREACHED_ESCALATED,
             previous_state=raw_priority,
-            new_state=classification.effective_priority,
+            new_state=effective_priority,
             metadata={
-                "trigger": "incident_classification_rules",
-                "matched_rules": classification.matched_rules,
+                "trigger": (
+                    "triage_failure_fallback"
+                    if triage_fallback_applied
+                    else "incident_classification_rules"
+                ),
+                "matched_rules": classified_rules,
             },
         )
 
@@ -289,8 +353,8 @@ async def handle_ticket_created_webhook(
     notification_payload = build_notification_payload(
         ticket_id=payload.record.id,
         ticket_number=payload.record.ticket_number,
-        priority=classification.effective_priority,
-        category=classification.effective_category,
+        priority=effective_priority,
+        category=effective_category,
         title=payload.record.title,
         description=payload.record.description,
         assigned_team=target_team_name,
@@ -313,10 +377,11 @@ async def handle_ticket_created_webhook(
         "ticket_id": str(payload.record.id),
         "ticket_number": payload.record.ticket_number,
         "assigned_team": target_team_name,
-        "effective_priority": classification.effective_priority,
-        "effective_category": classification.effective_category,
+        "effective_priority": effective_priority,
+        "effective_category": effective_category,
         "sla_due_at": effective_sla_due_at,
         "matched_rule": combined_rule,
+        "triage_fallback_applied": triage_fallback_applied,
         "notification_queued": True,
         "workspace_link": notification_payload.workspace_link,
     }
