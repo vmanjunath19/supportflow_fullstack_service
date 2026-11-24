@@ -16,6 +16,14 @@ from app.services.retry_queue import process_retry_queue
 from app.core.logging import configure_structured_logging
 from app.middleware.request_logging import CorrelationLoggingMiddleware
 
+import time
+import uuid
+from fastapi import Request
+from starlette.middleware.base import BaseHTTPMiddleware
+from contextvars import ContextVar
+
+correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+
 configure_structured_logging()
 
 load_dotenv()
@@ -27,6 +35,53 @@ SLA_POLL_INTERVAL_SECONDS = int(os.getenv("SLA_POLL_INTERVAL_SECONDS", "60"))
 RETRY_POLL_INTERVAL_SECONDS = int(os.getenv("RETRY_POLL_INTERVAL_SECONDS", "30"))
 scheduler = AsyncIOScheduler()
 
+class ObservabilityMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        correlation_id = (
+            request.headers.get("X-Correlation-ID", "").strip()
+            or str(uuid.uuid4())
+        )
+        token = correlation_id_var.set(correlation_id)
+        start = time.perf_counter()
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            logger.exception(
+                "request_failed",
+                extra={
+                    "correlation_id": correlation_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "duration_ms": duration_ms,
+                },
+            )
+            correlation_id_var.reset(token)
+            raise
+
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Response-Time-Ms"] = f"{duration_ms:.2f}"
+
+        level = (
+            logging.ERROR if response.status_code >= 500
+            else logging.WARNING if response.status_code >= 400
+            else logging.INFO
+        )
+        logger.log(
+            level,
+            "request_completed",
+            extra={
+                "correlation_id": correlation_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+        correlation_id_var.reset(token)
+        return response
 
 async def scheduled_sla_job() -> None:
     try:
@@ -93,6 +148,7 @@ app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"]
 app.include_router(health.router)
 app.include_router(classification.router, prefix="/api/v1", tags=["Classification"])
 
+app.add_middleware(ObservabilityMiddleware)
 
 @app.get("/health")
 async def health_check():
