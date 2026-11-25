@@ -5,6 +5,7 @@ import type {
   TicketPriority,
   TicketStatus,
 } from '../types/database';
+import type { CreateTicketValidatedData } from './ticketSchema';
 
 export class ApiError extends Error {
   readonly status: number;
@@ -44,8 +45,8 @@ export interface CreateTicketRequest {
   description: string;
   category: TicketCategory;
   priority: TicketPriority;
-  impact?: 'Low' | 'Medium' | 'High';
-  urgency?: 'Low' | 'Medium' | 'High';
+  impact?: CreateTicketValidatedData['impact'];
+  urgency?: CreateTicketValidatedData['urgency'];
   requester_email: string;
 }
 
