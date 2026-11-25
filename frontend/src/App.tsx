@@ -4,6 +4,7 @@ import { SubmitTicketPage } from './pages/portal/SubmitTicketPage';
 import { TrackTicketsPage } from './pages/portal/TrackTicketsPage';
 import { WorkspacePage } from './pages/WorkspacePage';
 import { PortalLayout } from './components/portal/PortalLayout';
+import { TicketDetailPage } from './pages/portal/TicketDetailPage';
 
 export function App() {
   return (
@@ -14,6 +15,7 @@ export function App() {
           <Route index element={<PortalHomePage />} />
           <Route path="tickets" element={<TrackTicketsPage />} />
           <Route path="tickets/new" element={<SubmitTicketPage />} />
+          <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
         </Route>
 
         {/* Internal SupportFlow Agent Workspace */}
