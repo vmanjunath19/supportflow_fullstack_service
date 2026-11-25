@@ -3,6 +3,7 @@ from app.schemas.health import HealthCheckResponse
 from app.services.health_service import get_service_health
 import os
 from datetime import datetime, timezone
+from pydantic import BaseModel
 
 router = APIRouter(tags=["Health"])
 
@@ -17,6 +18,24 @@ async def health_check() -> HealthCheckResponse:
 SLA_POLL_INTERVAL_SECONDS = int(os.getenv("SLA_POLL_INTERVAL_SECONDS", "60"))
 RETRY_POLL_INTERVAL_SECONDS = int(os.getenv("RETRY_POLL_INTERVAL_SECONDS", "30"))
 
+class HealthResponse(BaseModel):
+    status: str
+    service: str
+    version: str
+    sla_worker_running: bool
+    sla_poll_interval_seconds: int
+    retry_poll_interval_seconds: int
+    timestamp_utc: str
+
+@router.get("/", summary="Root Service Status")
+async def root(request: Request) -> dict[str, str]:
+    return {
+        "status": "ok",
+        "service": request.app.title,
+        "version": request.app.version,
+        "health": "/health",
+        "docs": "/docs",
+    }
 
 @router.get("/health")
 async def health_check(request: Request):

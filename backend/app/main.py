@@ -15,14 +15,20 @@ from app.services.retry_queue import process_retry_queue
 
 from app.core.logging import configure_structured_logging
 from app.middleware.request_logging import CorrelationLoggingMiddleware
-
+from app.routers import tickets
 import time
 import uuid
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextvars import ContextVar
+from app.core.config import get_settings
+from pathlib import Path
+
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+settings = get_settings()
 
 configure_structured_logging()
 
@@ -127,18 +133,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="SupportFlow Incident Automation API",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
+    title=settings.app_name,
+    debug=settings.debug,
 )
+
 
 app.add_middleware(CorrelationLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -146,9 +154,20 @@ app.add_middleware(
 
 app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 app.include_router(health.router)
-app.include_router(classification.router, prefix="/api/v1", tags=["Classification"])
+app.include_router(classification.router, prefix=settings.api_v1_prefix, tags=["Classification"])
+
+app.include_router(tickets.router, prefix="/api/v1/tickets")
+app.include_router(tickets.router, prefix="/api/tickets", include_in_schema=False)
 
 app.add_middleware(ObservabilityMiddleware)
+
+@app.get("/", tags=["Root"], summary="Root Service Status")
+async def root() -> dict[str, str]:
+    return {
+        "status": "ok",
+        "service": settings.app_name,
+        "docs": "/docs",
+    }
 
 @app.get("/health")
 async def health_check():

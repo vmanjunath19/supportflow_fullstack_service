@@ -27,3 +27,14 @@ asyncio_mode = "auto"
 [build-system]
 requires = ["poetry-core>=1.8.0"]
 build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "backend-api"
+version = "0.1.0"
+description = "Typed FastAPI REST API service"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic-settings>=2.6.0",
+]
