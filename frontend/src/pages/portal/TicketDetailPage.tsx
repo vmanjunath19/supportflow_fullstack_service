@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -23,17 +23,8 @@ import { PriorityBadge, StatusBadge } from '../../components/TicketBadges';
 import { Breadcrumbs } from '../../components/portal/Breadcrumbs';
 import { EmptyState } from '../../components/portal/EmptyState';
 import { TicketDetailSkeleton } from '../../components/portal/PortalSkeletons';
-import type { Ticket, TicketEvent, TicketStatus } from '../../types/database';
-
-interface TicketDetailPayload {
-  ticket: Ticket;
-  sla: {
-    sla_due_at: string | null;
-    is_breached: boolean;
-    remaining_seconds: number | null;
-  };
-  audit_events: TicketEvent[];
-}
+import { useTicketDetailQuery } from '../../hooks/useTickets';
+import type { TicketEvent, TicketStatus } from '../../types/database';
 
 const LIFECYCLE_STAGES: {
   status: TicketStatus;
@@ -51,7 +42,7 @@ const STAGE_ORDER: Record<TicketStatus, number> = {
   New: 0,
   Triaged: 1,
   'In Progress': 2,
-  Blocked: 2, // Stays at active investigation stage with a Blocked alert
+  Blocked: 2,
   Resolved: 3,
   Closed: 4,
 };
@@ -131,62 +122,22 @@ function getEventPresentation(evt: TicketEvent) {
 
 export function TicketDetailPage() {
   const { ticketId } = useParams<{ ticketId: string }>();
-  const [detail, setDetail] = useState<TicketDetailPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
-  // 1-second live SLA clock
+  const {
+    data: detail,
+    isLoading,
+    isFetching,
+    error,
+    refetch,
+  } = useTicketDetailQuery(ticketId);
+
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
-  const fetchTicketDetail = useCallback(
-    async ({ silent = false }: { silent?: boolean } = {}) => {
-      if (!ticketId) return;
-      if (silent) {
-        setIsRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-      setError(null);
-
-      try {
-        const res = await fetch(`/api/tickets/${encodeURIComponent(ticketId)}`);
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(
-            typeof data.detail === 'string' ? data.detail : 'Ticket not found.'
-          );
-        }
-        setDetail(data as TicketDetailPayload);
-      } catch (err) {
-        if (!silent) {
-          setError(err instanceof Error ? err.message : 'Unable to load ticket details.');
-        }
-      } finally {
-        setLoading(false);
-        setIsRefreshing(false);
-      }
-    },
-    [ticketId]
-  );
-
-  useEffect(() => {
-    fetchTicketDetail();
-  }, [fetchTicketDetail]);
-
-  // Poll every 20 seconds for real-time updates
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      fetchTicketDetail({ silent: true });
-    }, 20_000);
-    return () => window.clearInterval(interval);
-  }, [fetchTicketDetail]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="mx-auto max-w-4xl rounded-2xl border border-slate-200 bg-white p-6 shadow-xs sm:p-8">
         <TicketDetailSkeleton />
@@ -200,7 +151,11 @@ export function TicketDetailPage() {
         <EmptyState
           icon={AlertCircle}
           title="Ticket could not be loaded"
-          description={error ?? 'The requested support ticket does not exist or may have been removed.'}
+          description={
+            error instanceof Error
+              ? error.message
+              : 'The requested support ticket does not exist or may have been removed.'
+          }
           actionLabel="Back to My Tickets"
           actionTo="/tickets"
         />
@@ -220,7 +175,6 @@ export function TicketDetailPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      {/* Custom Breadcrumb Trail with Formatted Ticket ID */}
       <Breadcrumbs
         items={[
           { label: 'Help Center', to: '/' },
@@ -232,7 +186,6 @@ export function TicketDetailPage() {
         ]}
       />
 
-      {/* Top Action Bar */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Link
           to={`/tickets?email=${encodeURIComponent(ticket.requester_email)}`}
@@ -244,18 +197,17 @@ export function TicketDetailPage() {
 
         <button
           type="button"
-          onClick={() => fetchTicketDetail({ silent: true })}
+          onClick={() => refetch()}
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
         >
           <RefreshCw
-            className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin text-indigo-600' : ''}`}
+            className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin text-indigo-600' : ''}`}
             aria-hidden="true"
           />
           Refresh Status
         </button>
       </div>
 
-      {/* Header & Lifecycle Progress Stepper Card */}
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-xs sm:p-8 space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-5">
           <div className="space-y-1.5">
@@ -271,7 +223,6 @@ export function TicketDetailPage() {
             </h1>
           </div>
 
-          {/* Live SLA Pill */}
           <div className="shrink-0">
             {isTerminal ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
@@ -303,7 +254,6 @@ export function TicketDetailPage() {
           </div>
         </div>
 
-        {/* Visual Progress Stepper */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -376,9 +326,7 @@ export function TicketDetailPage() {
         </div>
       </section>
 
-      {/* Two-Column Details + Interactive Audit Timeline */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Left Column: Description, Resolution Notes & Metadata */}
         <div className="space-y-6 lg:col-span-1">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs space-y-4">
             <h2 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -459,7 +407,6 @@ export function TicketDetailPage() {
           )}
         </div>
 
-        {/* Right Column: Complete Historical Audit Timeline */}
         <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-2xs lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -550,3 +497,5 @@ export function TicketDetailPage() {
     </div>
   );
 }
+
+export default TicketDetailPage;

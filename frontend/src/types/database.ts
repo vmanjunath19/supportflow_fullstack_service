@@ -42,7 +42,7 @@ export interface Ticket {
   sla_due_at: string | null;
   resolved_at: string | null;
   created_at: string;
-  updated_at: string;
+  updated_at: string | null;
   // Joined relation from support_teams
   support_teams?: {
     name: string;

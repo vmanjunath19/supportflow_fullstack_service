@@ -31,6 +31,7 @@ import {
   type CreateTicketValidatedData,
 } from '../../lib/ticketSchema';
 import { PriorityBadge } from '../../components/TicketBadges';
+import { useCreateTicketMutation } from '../../hooks/useTickets';
 import type { Ticket, TicketCategory, TicketPriority } from '../../types/database';
 
 interface CategoryOption {
@@ -94,6 +95,8 @@ const WIZARD_STEPS = [
 
 export function SubmitTicketPage() {
   const navigate = useNavigate();
+  const createTicketMutation = useCreateTicketMutation();
+
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [createdTicket, setCreatedTicket] = useState<Ticket | null>(null);
@@ -157,30 +160,17 @@ export function SubmitTicketPage() {
     try {
       const priority = calculateTicketPriority(values.impact, values.urgency);
 
-      const res = await fetch('/api/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: values.title,
-          description: values.description,
-          category: values.category,
-          priority,
-          impact: values.impact,
-          urgency: values.urgency,
-          requester_email: values.requester_email,
-        }),
+      const ticket = await createTicketMutation.mutateAsync({
+        title: values.title,
+        description: values.description,
+        category: values.category,
+        priority,
+        impact: values.impact,
+        urgency: values.urgency,
+        requester_email: values.requester_email,
       });
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(
-          typeof data.detail === 'string'
-            ? data.detail
-            : 'Validation failed. Please review your request details.'
-        );
-      }
-
-      setCreatedTicket(data as Ticket);
+      setCreatedTicket(ticket);
     } catch (err) {
       setSubmitError(
         err instanceof Error ? err.message : 'Unable to submit support request.'
@@ -189,32 +179,111 @@ export function SubmitTicketPage() {
   }
 
   if (createdTicket) {
-    const formattedId = `INC-${String(createdTicket.ticket_number).padStart(4, '0')}`; function handleCopyTicketId() { navigator.clipboard?.writeText(formattedId); setCopiedId(true); setTimeout(() => setCopiedId(false), 2000); } return (<div className="mx-auto max-w-xl rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8 space-y-6"> <div className="text-center space-y-2"> <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600"> <CheckCircle2 className="h-7 w-7" aria-hidden="true" /> </div> <h1 className="text-2xl font-bold text-slate-900">Support Request Created</h1> <p className="text-sm text-slate-600"> Your incident has been logged and queued for triage. Save your Ticket ID below for reference. </p> </div>  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-center justify-between gap-3"> <div> <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500"> Generated Ticket ID </p> <p className="font-mono text-xl font-bold text-indigo-600 mt-0.5">{formattedId}</p> <p className="font-mono text-[11px] text-slate-400 mt-0.5 truncate max-w-xs"> Ref: {createdTicket.id} </p> </div> <button type="button" onClick={handleCopyTicketId} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer" > {copiedId ? (<> <Check className="h-3.5 w-3.5 text-emerald-600" /> Copied </>) : (<> <Copy className="h-3.5 w-3.5" /> Copy ID </>)} </button> </div>  <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs border-t border-slate-100 pt-4"> <div> <dt className="text-slate-500">Subject</dt> <dd className="font-semibold text-slate-900 mt-0.5">{createdTicket.title}</dd> </div> <div> <dt className="text-slate-500">Assigned SLA Priority</dt> <dd className="mt-1"> <PriorityBadge priority={createdTicket.priority} /> </dd> </div> <div> <dt className="text-slate-500">Category</dt> <dd className="font-medium text-slate-800 mt-0.5">{createdTicket.category}</dd> </div> <div> <dt className="text-slate-500">SLA Resolution Target</dt> <dd className="font-medium text-slate-800 mt-0.5 flex items-center gap-1"> <Clock className="h-3.5 w-3.5 text-indigo-500" /> {createdTicket.sla_due_at ? new Date(createdTicket.sla_due_at).toLocaleString() : SLA_TARGET_COPY[createdTicket.priority]} </dd> </div> </dl>  <div className="pt-2 flex flex-wrap justify-center gap-3"> <button type="button" onClick={() => navigate(`/tickets?email=${encodeURIComponent(createdTicket.requester_email)}`)
+    const formattedId = `INC-${String(createdTicket.ticket_number).padStart(4, '0')}`;
+
+    function handleCopyTicketId() {
+      navigator.clipboard?.writeText(formattedId);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
     }
-      className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors cursor-pointer"
-    >
-      Track My Tickets
-    </button>
-      <button
-        type="button"
-        onClick={() => navigate(`/tickets/${createdTicket.id}`)}
-        className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors cursor-pointer"
-      >
-        View Ticket Timeline
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setCreatedTicket(null);
-          setStep(1);
-          reset();
-        }}
-        className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-      >
-        Submit Another Request
-      </button>
-    </div>
-    </div>
+
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm sm:p-8 space-y-6">
+        <div className="text-center space-y-2">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+            <CheckCircle2 className="h-7 w-7" aria-hidden="true" />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">Support Request Created</h1>
+          <p className="text-sm text-slate-600">
+            Your incident has been logged and queued for triage. Save your Ticket ID below for reference.
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Generated Ticket ID
+            </p>
+            <p className="font-mono text-xl font-bold text-indigo-600 mt-0.5">{formattedId}</p>
+            <p className="font-mono text-[11px] text-slate-400 mt-0.5 truncate max-w-xs">
+              Ref: {createdTicket.id}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleCopyTicketId}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            {copiedId ? (
+              <>
+                <Check className="h-3.5 w-3.5 text-emerald-600" />
+                Copied
+              </>
+            ) : (
+              <>
+                <Copy className="h-3.5 w-3.5" />
+                Copy ID
+              </>
+            )}
+          </button>
+        </div>
+
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs border-t border-slate-100 pt-4">
+          <div>
+            <dt className="text-slate-500">Subject</dt>
+            <dd className="font-semibold text-slate-900 mt-0.5">{createdTicket.title}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Assigned SLA Priority</dt>
+            <dd className="mt-1">
+              <PriorityBadge priority={createdTicket.priority} />
+            </dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">Category</dt>
+            <dd className="font-medium text-slate-800 mt-0.5">{createdTicket.category}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-500">SLA Resolution Target</dt>
+            <dd className="font-medium text-slate-800 mt-0.5 flex items-center gap-1">
+              <Clock className="h-3.5 w-3.5 text-indigo-500" />
+              {createdTicket.sla_due_at
+                ? new Date(createdTicket.sla_due_at).toLocaleString()
+                : SLA_TARGET_COPY[createdTicket.priority]}
+            </dd>
+          </div>
+        </dl>
+
+        <div className="pt-2 flex flex-wrap justify-center gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(`/tickets/${createdTicket.id}`)}
+            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors cursor-pointer"
+          >
+            View Ticket Timeline
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              navigate(`/tickets?email=${encodeURIComponent(createdTicket.requester_email)}`)
+            }
+            className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            Track My Tickets
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreatedTicket(null);
+              setStep(1);
+              reset();
+            }}
+            className="rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            Submit Another Request
+          </button>
+        </div>
+      </div>
     );
   }
 
@@ -237,20 +306,22 @@ export function SubmitTicketPage() {
               <li
                 key={number}
                 aria-current={isCurrent ? 'step' : undefined}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${isCurrent
-                  ? 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20'
-                  : isCompleted
-                    ? 'text-emerald-700'
-                    : 'text-slate-400'
-                  }`}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
+                  isCurrent
+                    ? 'bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-600/20'
+                    : isCompleted
+                      ? 'text-emerald-700'
+                      : 'text-slate-400'
+                }`}
               >
                 <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${isCurrent
-                    ? 'bg-indigo-600 text-white'
-                    : isCompleted
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-slate-200 text-slate-600'
-                    }`}
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                    isCurrent
+                      ? 'bg-indigo-600 text-white'
+                      : isCompleted
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-200 text-slate-600'
+                  }`}
                 >
                   {isCompleted ? <Check className="h-3.5 w-3.5" /> : number}
                 </span>
@@ -293,16 +364,18 @@ export function SubmitTicketPage() {
                       type="button"
                       aria-pressed={isSelected}
                       onClick={() => setValue('category', value, { shouldValidate: true })}
-                      className={`text-left rounded-xl border p-4 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${isSelected
-                        ? 'border-indigo-600 bg-indigo-50/60 ring-1 ring-indigo-600'
-                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70'
-                        }`}
+                      className={`text-left rounded-xl border p-4 transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+                        isSelected
+                          ? 'border-indigo-600 bg-indigo-50/60 ring-1 ring-indigo-600'
+                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70'
+                      }`}
                     >
                       <div
-                        className={`mb-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg ${isSelected
-                          ? 'bg-indigo-600 text-white'
-                          : 'bg-slate-100 text-slate-600'
-                          }`}
+                        className={`mb-2.5 inline-flex h-8 w-8 items-center justify-center rounded-lg ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 text-slate-600'
+                        }`}
                       >
                         <Icon className="h-4 w-4" aria-hidden="true" />
                       </div>
@@ -399,7 +472,7 @@ export function SubmitTicketPage() {
         {step === 3 && (
           <div className="space-y-6">
             <div
-              className={`rounded-xl border p-4 transition-colors \${
+              className={`rounded-xl border p-4 transition-colors ${
                 isUrgentFlagged
                   ? 'border-rose-300 bg-rose-50/70'
                   : 'border-slate-200 bg-slate-50/70'
@@ -408,7 +481,7 @@ export function SubmitTicketPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-3">
                   <div
-                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg \${
+                    className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                       isUrgentFlagged
                         ? 'bg-rose-600 text-white'
                         : 'bg-amber-100 text-amber-700'
@@ -431,7 +504,7 @@ export function SubmitTicketPage() {
                   role="switch"
                   aria-checked={isUrgentFlagged}
                   onClick={toggleUrgentOutageFlag}
-                  className={`inline-flex items-center justify-center rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors cursor-pointer shrink-0 \${
+                  className={`inline-flex items-center justify-center rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors cursor-pointer shrink-0 ${
                     isUrgentFlagged
                       ? 'bg-rose-600 text-white hover:bg-rose-700'
                       : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
